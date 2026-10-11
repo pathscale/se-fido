@@ -15,7 +15,7 @@ declarations, no C, C++, Objective-C or Swift source and no `-sys` crates.
 | --- | --- |
 | `ctaphid` | CTAPHID framing: packets, reassembly, channels, INIT, PING, WINK, LOCK, CANCEL, KEEPALIVE, timeouts. `no_std` + alloc. |
 | `ctap2` | Authenticator: GetInfo, MakeCredential, GetAssertion, GetNextAssertion, Reset, Selection. Canonical CBOR, COSE ES256, packed self attestation. Software backend for fixtures. `no_std` + alloc. |
-| `se-fido-store` | Credential index encrypted with AES-256-GCM and an atomic monotonic signature counter, on disk. |
+| `se-fido-store` | Credential index encrypted with ChaCha20-Poly1305 and an atomic monotonic signature counter, on disk. |
 | `backend-se` | Secure Enclave keys via Security.framework, storage key from SE ECDH + HKDF, `se-probe` binary. macOS only. |
 | `transport-test` | In-memory CTAPHID host and a relying-party verifier, for end-to-end runs. |
 | `transport-mac` | Virtual HID via IOHIDUserDevice (create/activate only with `se-fido-device --run`). See DESIGN.md and DEPLOY.md. |

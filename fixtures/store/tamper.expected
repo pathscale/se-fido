@@ -4,7 +4,7 @@
   opened count=0 counter=0
 > insert id=c1 rp=secret-rp.example rk
   inserted
-  credentials.bin size=200 mode=600 sha256=d62f01cf3c9e6e52e1eb571ecb54221ee7e8f01de5b5572521e81d20f35d2f86
+  credentials.bin size=200 mode=600 sha256=8ec790dfe18f505d2087f4443f6e587a1085a2ac67bc9e10ade1fb7755e11f7f
   counter absent
 > absent file=credentials.bin text=secret-rp.example
   secret-rp.example not present in credentials.bin

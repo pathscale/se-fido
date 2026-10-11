@@ -20,13 +20,13 @@
   counter size=12 mode=600 sha256=617472311216014f63de96ba2dc82394cfb679198102b95862c4d9b83f2dc124
 > clear
   cleared 0
-  credentials.bin size=30 mode=600 sha256=2c95f2b801be0bae34afa72193f480eb9a8eba50ba3b7b72f6beefb16fb5f82a
+  credentials.bin size=30 mode=600 sha256=22f1257cbe929f1d9ebbca76c69846a329c70ed32cdb52b7060344823983401a
   counter size=12 mode=600 sha256=617472311216014f63de96ba2dc82394cfb679198102b95862c4d9b83f2dc124
 > open
   opened count=0 counter=4
 > counter
   counter=5
-  credentials.bin size=30 mode=600 sha256=2c95f2b801be0bae34afa72193f480eb9a8eba50ba3b7b72f6beefb16fb5f82a
+  credentials.bin size=30 mode=600 sha256=22f1257cbe929f1d9ebbca76c69846a329c70ed32cdb52b7060344823983401a
   counter size=12 mode=600 sha256=a30fb70e4e5b36695ad5570336f741e12d0492e1ab1c121b88bfc07b22374029
 > write file=counter hex=6a756e6b
   wrote 4 bytes
@@ -44,7 +44,7 @@
   opened count=0 counter=4294967294
 > counter
   counter=4294967295
-  credentials.bin size=30 mode=600 sha256=2c95f2b801be0bae34afa72193f480eb9a8eba50ba3b7b72f6beefb16fb5f82a
+  credentials.bin size=30 mode=600 sha256=22f1257cbe929f1d9ebbca76c69846a329c70ed32cdb52b7060344823983401a
   counter size=12 mode=600 sha256=dea0bdb054dc78b01ceeef5f146869e89cf0af954a46e85ad6d9d4ab3a932cf2
 > counter expect=CounterExhausted
   error CounterExhausted: signature counter exhausted

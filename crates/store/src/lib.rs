@@ -3,7 +3,7 @@
 //! Directory layout (runtime default `$HOME/Library/Application Support/se-fido`,
 //! see [`default_dir`]):
 //!
-//! * `credentials.bin`: `version(1) || nonce(12) || AES-256-GCM(CBOR array)`,
+//! * `credentials.bin`: `version(1) || nonce(12) || ChaCha20-Poly1305(CBOR array)`,
 //!   AAD binds file name and version, fresh nonce from the supplied
 //!   [`Entropy`] on every write.
 //! * `counter`: global signature counter, `SFC1 || u32 BE || FNV-1a(u32)`.
@@ -17,8 +17,8 @@
 
 #![forbid(unsafe_code)]
 
-use aes_gcm::aead::{Aead, KeyInit, Payload};
-use aes_gcm::{Aes256Gcm, Nonce};
+use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use ctap2::cbor::{decode, encode, Out, Value};
 use ctap2::{Bytes, Credential, CredentialStore, Entropy, StoreError, Text};
 use std::fs::{self, File, OpenOptions};
@@ -28,8 +28,8 @@ use std::sync::Arc;
 
 pub const CRED_FILE: &str = "credentials.bin";
 pub const COUNTER_FILE: &str = "counter";
-const FORMAT_VERSION: u8 = 1;
-const AAD: &[u8] = b"se-fido credentials.bin v1";
+const FORMAT_VERSION: u8 = 2;
+const AAD: &[u8] = b"se-fido credentials.bin v2";
 const COUNTER_MAGIC: &[u8; 4] = b"SFC1";
 pub const DEFAULT_CAPACITY: usize = 1000;
 
@@ -40,7 +40,7 @@ pub fn default_dir() -> Option<PathBuf> {
 
 pub struct FileStore<E> {
     dir: PathBuf,
-    cipher: Aes256Gcm,
+    cipher: ChaCha20Poly1305,
     entropy: E,
     creds: Vec<Arc<Credential>>,
     counter: u32,
@@ -57,8 +57,8 @@ impl<E: Entropy> FileStore<E> {
     pub fn open(dir: impl Into<PathBuf>, key: &[u8; 32], entropy: E) -> Result<Self, StoreError> {
         let dir = dir.into();
         create_private_dir(&dir).map_err(io)?;
-        let cipher =
-            Aes256Gcm::new_from_slice(key).map_err(|_| StoreError::Io("bad key length".into()))?;
+        let cipher = ChaCha20Poly1305::new_from_slice(key)
+            .map_err(|_| StoreError::Io("bad key length".into()))?;
         let creds = match fs::read(dir.join(CRED_FILE)) {
             Ok(b) => decrypt_index(&cipher, &b)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
@@ -199,7 +199,7 @@ fn opt_text(t: &Option<Text>) -> Out<'_> {
 }
 
 fn encrypt_index(
-    cipher: &Aes256Gcm,
+    cipher: &ChaCha20Poly1305,
     nonce: &[u8; 12],
     creds: &[Arc<Credential>],
 ) -> Result<Vec<u8>, StoreError> {
@@ -238,7 +238,10 @@ fn encrypt_index(
     Ok(out)
 }
 
-fn decrypt_index(cipher: &Aes256Gcm, blob: &[u8]) -> Result<Vec<Arc<Credential>>, StoreError> {
+fn decrypt_index(
+    cipher: &ChaCha20Poly1305,
+    blob: &[u8],
+) -> Result<Vec<Arc<Credential>>, StoreError> {
     if blob.len() < 13 + 16 || blob[0] != FORMAT_VERSION {
         return Err(StoreError::Corrupt("credential index header".into()));
     }
