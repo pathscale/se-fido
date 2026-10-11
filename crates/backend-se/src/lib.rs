@@ -1,19 +1,18 @@
 //! Secure Enclave backend for the `ctap2` authenticator.
 //!
-//! Talks to Apple's Security.framework through a small hand-written C FFI
-//! ([`ffi`]); no Swift, Objective-C, CryptoKit or wrapper crates. Only the
-//! CoreFoundation crates (MIT/Apache-2.0) are used for CF object lifetimes.
+//! All Apple calls go through hand-written `extern "C"` declarations in
+//! [`ffi`] linked against Security.framework and CoreFoundation.framework.
+//! No Swift, Objective-C, CryptoKit, `-sys` crates or wrapper crates.
 //!
-//! Two storage modes:
-//! * [`StorageMode::Blob`]: a non-permanent Secure Enclave key whose
-//!   SE-encrypted "token object" blob (the undocumented `toid` attribute) is
-//!   stored by us and reloaded with `SecKeyCreateWithData`. Needs no
-//!   keychain entitlement.
-//! * [`StorageMode::Keychain`]: a permanent keychain item found by
-//!   application tag. Needs a keychain-access-groups entitlement in the
-//!   data-protection keychain, so it fails for unsigned/ad-hoc binaries.
+//! Storage modes:
+//! * [`StorageMode::Blob`]: non-permanent Secure Enclave key; its
+//!   SE-encrypted token object (undocumented `toid` attribute) is kept by us
+//!   and reloaded with `SecKeyCreateWithData`. No entitlement needed.
+//! * [`StorageMode::Keychain`]: permanent data-protection keychain item by
+//!   application tag. Needs a keychain-access-groups entitlement; fails with
+//!   -34018 for ad-hoc signed binaries.
 //!
-//! See `PLAN.md` for which mode was verified to work on which setup.
+//! Results per macOS version are recorded in PLAN.md.
 
 #[cfg(target_os = "macos")]
 pub mod ffi;

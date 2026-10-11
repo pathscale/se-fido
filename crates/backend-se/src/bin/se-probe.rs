@@ -1,13 +1,12 @@
 //! se-probe: exercise the Secure Enclave from a plain CLI binary and report
-//! exactly what works.
+//! what works.
 //!
 //! Usage: se-probe [--touchid] [--legacy-keychain]
 //!
-//!   (default)          no user prompts: AccessPolicy::None
-//!   --touchid          require user presence (Touch ID / password) on every
-//!                      private-key use; expect prompts
+//!   (default)          no prompts, AccessPolicy::None
+//!   --touchid          require user presence on every key use (prompts)
 //!   --legacy-keychain  also try a permanent key in the legacy file keychain
-//!                      (may show keychain dialogs; off by default)
+//!                      (may show keychain dialogs)
 
 #[cfg(not(target_os = "macos"))]
 fn main() {
@@ -22,18 +21,14 @@ fn main() {
 
 #[cfg(target_os = "macos")]
 mod probe {
-    use backend_se::{AccessPolicy, KeyStorage, ReloadVariant, SeError, SecKey};
+    use backend_se::{AccessPolicy, KeyStorage, ReloadVariant, SeError, SecKey, SystemEntropy};
+    use ctap2::{der, hex, Entropy};
     use p256::ecdsa::signature::Verifier;
-    use p256::ecdsa::{Signature, VerifyingKey};
+    use p256::ecdsa::VerifyingKey;
     use p256::elliptic_curve::sec1::ToEncodedPoint;
-    use rand::rngs::OsRng;
-    use rand::RngCore;
+    use std::time::Instant;
 
     const MSG: &[u8] = b"se-fido probe message";
-
-    fn hex(b: &[u8]) -> String {
-        b.iter().map(|x| format!("{x:02x}")).collect()
-    }
 
     fn report<T>(name: &str, r: &Result<T, SeError>) {
         match r {
@@ -42,34 +37,41 @@ mod probe {
         }
     }
 
-    fn verify(pubkey: &[u8], sig: &[u8]) -> Result<(), String> {
-        let vk = VerifyingKey::from_sec1_bytes(pubkey).map_err(|e| format!("bad pubkey: {e}"))?;
-        let s = Signature::from_der(sig).map_err(|e| format!("bad DER: {e}"))?;
-        vk.verify(MSG, &s)
-            .map_err(|e| format!("verify failed: {e}"))
+    fn line(ok: bool, text: &str) -> bool {
+        println!("[{}] {text}", if ok { " OK " } else { "FAIL" });
+        ok
     }
 
     fn check_sign(label: &str, key: &SecKey, pubkey: &[u8]) -> bool {
+        let t = Instant::now();
         let sig = key.sign(MSG);
-        report(&format!("{label}: SecKeyCreateSignature"), &sig);
+        let ms = t.elapsed().as_secs_f64() * 1000.0;
+        report(
+            &format!("{label}: SecKeyCreateSignature ({ms:.1} ms)"),
+            &sig,
+        );
         let Ok(sig) = sig else { return false };
-        match verify(pubkey, &sig) {
-            Ok(()) => {
-                println!(
-                    "[ OK ] {label}: signature ({} bytes DER) verifies with p256",
-                    sig.len()
-                );
-                true
-            }
-            Err(e) => {
-                println!("[FAIL] {label}: {e}");
-                false
-            }
-        }
+        let ok = match (VerifyingKey::from_sec1_bytes(pubkey), der::decode(&sig)) {
+            (Ok(vk), Some(s)) => vk.verify(MSG, &s).is_ok(),
+            _ => false,
+        };
+        line(
+            ok,
+            &format!(
+                "{label}: signature ({} bytes DER) verifies with p256",
+                sig.len()
+            ),
+        )
     }
 
     fn check_ecdh(label: &str, key: &SecKey, se_pub: &[u8]) -> bool {
-        let peer = p256::SecretKey::random(&mut OsRng);
+        let peer = loop {
+            let mut b = [0u8; 32];
+            SystemEntropy.fill(&mut b);
+            if let Ok(s) = p256::SecretKey::from_slice(&b) {
+                break s;
+            }
+        };
         let peer_pub = peer.public_key().to_encoded_point(false);
         let se_side = key.ecdh(peer_pub.as_bytes());
         report(
@@ -77,16 +79,18 @@ mod probe {
             &se_side,
         );
         let Ok(se_side) = se_side else { return false };
-        let se_pk = p256::PublicKey::from_sec1_bytes(se_pub).expect("checked earlier");
+        let Ok(se_pk) = p256::PublicKey::from_sec1_bytes(se_pub) else {
+            return line(false, "bad SE public key");
+        };
         let sw = p256::ecdh::diffie_hellman(peer.to_nonzero_scalar(), se_pk.as_affine());
         let ok = sw.raw_secret_bytes()[..] == se_side[..];
-        println!(
-            "[{}] {label}: ECDH shared secret ({} bytes) {} software side",
-            if ok { " OK " } else { "FAIL" },
-            se_side.len(),
-            if ok { "matches" } else { "DOES NOT match" }
-        );
-        ok
+        line(
+            ok,
+            &format!(
+                "{label}: ECDH shared secret ({} bytes) matches software side",
+                se_side.len()
+            ),
+        )
     }
 
     pub fn run() {
@@ -108,11 +112,12 @@ mod probe {
         println!("se-probe: policy={policy:?}");
         let mut all_ok = true;
 
-        // ---- Mode (b): non-permanent key + token-object blob ----
-        println!("\n== mode b: ephemeral key + 'toid' blob ==");
+        println!("\n== mode b: ephemeral key + toid blob ==");
+        let t = Instant::now();
         let key = SecKey::generate(&KeyStorage::Ephemeral, policy);
+        let ms = t.elapsed().as_secs_f64() * 1000.0;
         report(
-            "SecKeyCreateRandomKey(tokenID=SecureEnclave, permanent=false)",
+            &format!("SecKeyCreateRandomKey(tokenID=SecureEnclave, permanent=false) ({ms:.1} ms)"),
             &key,
         );
         match key {
@@ -132,49 +137,42 @@ mod probe {
                     println!("         {k} = {v}");
                 }
                 let blob = key.token_object_blob();
-                report("read 'toid' token object blob", &blob);
+                report("read toid token object blob", &blob);
                 match blob {
                     Err(_) => all_ok = false,
                     Ok(blob) => {
                         println!("       BLOB SIZE: {} bytes", blob.len());
                         drop(key);
-                        let mut any = false;
+                        let mut usable = false;
                         for v in ReloadVariant::ALL {
+                            let t = Instant::now();
                             let k = SecKey::from_blob(&blob, v);
-                            report(&format!("reload via SecKeyCreateWithData {v:?}"), &k);
-                            if let Ok(k) = k {
-                                let same =
-                                    k.public_key_sec1().map(|p| p == pubkey).unwrap_or(false);
-                                println!(
-                                    "[{}] {v:?}: reloaded public key matches",
-                                    if same { " OK " } else { "FAIL" }
-                                );
-                                let signed = check_sign(&format!("reloaded {v:?}"), &k, &pubkey);
-                                if same && signed && !any {
-                                    any = true;
-                                    all_ok &= check_ecdh(&format!("reloaded {v:?}"), &k, &pubkey);
-                                }
+                            let ms = t.elapsed().as_secs_f64() * 1000.0;
+                            report(&format!("reload {v:?} ({ms:.1} ms)"), &k);
+                            let Ok(k) = k else { continue };
+                            let same = k.public_key_sec1().map(|p| p == pubkey).unwrap_or(false);
+                            line(same, &format!("{v:?}: reloaded public key matches"));
+                            let signed = check_sign(&format!("reloaded {v:?}"), &k, &pubkey);
+                            if same && signed && !usable {
+                                usable = true;
+                                all_ok &= check_ecdh(&format!("reloaded {v:?}"), &k, &pubkey);
                             }
                         }
-                        if !any {
-                            all_ok = false;
-                            println!("[FAIL] no reload variant worked");
-                        }
+                        all_ok &= line(usable, "at least one reload variant returns the same key");
                     }
                 }
             }
         }
 
-        // ---- Mode (a): permanent keychain item ----
         let mut variants = vec![(true, "data-protection keychain")];
         if legacy {
             variants.push((false, "legacy file keychain"));
         }
         for (dp, name) in variants {
             println!("\n== mode a: permanent key, {name} ==");
-            let mut tag = b"se-fido:probe:".to_vec();
             let mut rnd = [0u8; 8];
-            OsRng.fill_bytes(&mut rnd);
+            SystemEntropy.fill(&mut rnd);
+            let mut tag = b"se-fido:probe:".to_vec();
             tag.extend_from_slice(hex(&rnd).as_bytes());
             let k = SecKey::generate(
                 &KeyStorage::Keychain {
@@ -192,12 +190,13 @@ mod probe {
             if let Ok(found) = found {
                 check_sign("keychain key", &found, &pubkey);
             }
-            let del = SecKey::delete_from_keychain(&tag, dp);
-            report("SecItemDelete (cleanup)", &del);
-            let gone = SecKey::find_in_keychain(&tag, dp);
-            println!(
-                "[{}] key gone after delete",
-                if gone.is_err() { " OK " } else { "FAIL" }
+            report(
+                "SecItemDelete (cleanup)",
+                &SecKey::delete_from_keychain(&tag, dp),
+            );
+            line(
+                SecKey::find_in_keychain(&tag, dp).is_err(),
+                "key gone after delete",
             );
         }
 

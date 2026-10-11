@@ -1,6 +1,6 @@
 [package]
 name = "backend-se"
-description = "macOS Secure Enclave key backend (hand-written Security.framework FFI, no Swift/ObjC)"
+description = "macOS Secure Enclave key backend over hand-written Security.framework and CoreFoundation FFI"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,15 +8,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-ctap2.workspace = true
-p256.workspace = true
+ctap2 = { workspace = true, features = ["std"] }
+p256 = { workspace = true, features = ["ecdsa", "ecdh"] }
 sha2.workspace = true
 hkdf.workspace = true
-rand.workspace = true
-
-[target.'cfg(target_os = "macos")'.dependencies]
-core-foundation.workspace = true
-core-foundation-sys.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true
