@@ -1,0 +1,86 @@
+# se-fido
+
+A FIDO2 / CTAP 2 authenticator in Rust whose credential keys live in the
+macOS Secure Enclave. Goal: browsers on the same Mac see it as a USB
+security key through a virtual HID device. That last step is not built yet;
+see PLAN.md.
+
+Written from the FIDO CTAP 2.1 and W3C WebAuthn Level 2 specifications.
+Pure Rust: Apple APIs are reached through hand-written `extern "C"`
+declarations, no C, C++, Objective-C or Swift source and no `-sys` crates.
+
+## Crates
+
+| crate | role |
+| --- | --- |
+| `ctaphid` | CTAPHID framing: packets, reassembly, channels, INIT, PING, WINK, LOCK, CANCEL, KEEPALIVE, timeouts. `no_std` + alloc. |
+| `ctap2` | Authenticator: GetInfo, MakeCredential, GetAssertion, GetNextAssertion, Reset, Selection. Canonical CBOR, COSE ES256, packed self attestation. Software backend for fixtures. `no_std` + alloc. |
+| `se-fido-store` | Credential index encrypted with AES-256-GCM and an atomic monotonic signature counter, on disk. |
+| `backend-se` | Secure Enclave keys via Security.framework, storage key from SE ECDH + HKDF, `se-probe` binary. macOS only. |
+| `transport-test` | In-memory CTAPHID host and a relying-party verifier, for end-to-end runs. |
+| `transport-mac` | HID report descriptor, device properties, IOKit declarations. No device creation yet. See `crates/transport-mac/DESIGN.md`. |
+| `fixtures` | Fixture runner (not published). |
+
+Requests are parsed zero copy: byte and text strings are ranges into the
+`Arc<[u8]>` request buffer, and loaded credentials are ranges into the
+decrypted store buffer.
+
+## What the authenticator advertises
+
+- versions `FIDO_2_0` only; ES256 only; transports `usb`
+- options `rk`, `up`, `uv` (built-in UV, Touch ID in M5), `plat=false`
+- no `clientPin`: a zero-length pinUvAuthParam (the platform touch probe)
+  waits for presence and returns `PIN_NOT_SET`; anything else PIN related
+  is rejected
+- attestation: `packed` self attestation (default) or `none`
+- maxMsgSize 7609
+
+## AAGUID
+
+`c7ce4e58-6fd2-4eb8-b193-1d528be838a5`, the constant `ctap2::AAGUID` in
+`crates/ctap2/src/lib.rs`. It is our own model identifier, generated once
+with `uuidgen` for this project. It is not registered with the FIDO
+Metadata Service and identifies no certified product; relying parties that
+require MDS attestation will not recognise it. To change it, replace the 16
+bytes of that one constant with a fresh UUIDv4 and run
+`cargo run -p fixtures -- regen`. Never use another vendor AAGUID.
+
+## Secure Enclave storage
+
+Keys are P-256, created with `kSecAttrTokenIDSecureEnclave` and
+`permanent=false`. The key token object (`toid`, 324 bytes) is stored as
+the credential key handle and reloaded with `SecKeyCreateWithData`. The
+private key never leaves the Secure Enclave; the blob is only usable by the
+SE that wrapped it.
+
+The credential index is encrypted with a key derived by HKDF-SHA256 from
+ECDH between a Secure Enclave key and a saved throwaway public key, so the
+index can only be opened on this Mac.
+
+Keychain storage (`permanent=true`) fails with OSStatus -34018 for
+binaries without a keychain-access-group entitlement, so blob mode is the
+default.
+
+## Build and check
+
+    cargo build --workspace
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo fmt --check
+    cargo run -p fixtures -- check
+    target/debug/se-probe            # SE capability probe, no Touch ID
+    cargo run -p fixtures -- se      # end to end on the real SE, no Touch ID
+
+There are no unit tests; behaviour is pinned by fixtures with byte-for-byte
+expected outputs (`fixtures/README.md`). `se-probe --touchid` creates a key
+that needs Touch ID per use and will prompt.
+
+## Not verified
+
+- Whether another process (or the same binary after re-signing) can use a
+  stored `toid` blob.
+- Behaviour with Touch ID protected keys (`--touchid` not run).
+- Anything involving a real browser: no virtual HID device exists yet.
+
+## Licence
+
+MIT, see `LICENSE-MIT`.
