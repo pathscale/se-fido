@@ -40,27 +40,23 @@ checksum, tamper and wrong key detection.
 registers, logs in, reopens the store with a re-derived key, logs in again
 and resets, all through CTAPHID framing and verified relying-party side.
 
-## M4 Virtual HID device (next)
+## M4 Virtual HID device (code ready; deploy is manual)
 
-Primary route, pure Rust, user space:
+Implemented in `transport-mac`:
 
-1. CFDictionary from `transport_mac::properties()`.
-2. `IOHIDUserDeviceCreateWithProperties`, serial dispatch queue,
-   set-report block built as a `#[repr(C)]` Block_layout in Rust,
-   `IOHIDUserDeviceActivate`, replies via
-   `IOHIDUserDeviceHandleReportWithTimeStamp`.
-3. Verify the declarations in `transport-mac/src/ffi.rs` against the SDK
-   header before first call.
-4. Needs `com.apple.developer.hid.virtual.device`. Without an Apple grant
-   the user relaxes SIP/AMFI themselves; we never do or ask for that.
-5. Check with `ioreg` that the device appears with usage page 0xF1D0, then
-   a browser registration on a test RP.
+- FFI checked against macOS 26.2 SDK `IOHIDUserDevice.h` (see DESIGN.md
+  line citations).
+- Block ABI in Rust (`_NSConcreteStackBlock` + `_Block_copy`).
+- Property dictionary, serial queue, set/get report + cancel Blocks,
+  100 ms keepalive/timeout timer, SE-backed authenticator.
+- `se-fido-device` dry-runs by default; `--run` creates and activates.
+- Entitlements plist + `scripts/codesign.bun.ts`; steps in DEPLOY.md.
 
-Fallback, only if the primary route is blocked: a DriverKit HID dext in
-pure Rust that hand-matches the DriverKit C++ ABI (Itanium mangling,
-vtables, OSObject/IOService layouts). Fragile and unsupported; open
-questions on iig dispatch, dext packaging and signing are in
-`crates/transport-mac/DESIGN.md`.
+Not run here: `--run` (would need entitlement or SIP/AMFI relaxed).
+User follows DEPLOY.md, then verifies with `ioreg` / `hidutil` and
+webauthn.io in Chrome and Safari.
+
+Fallback DriverKit route remains design-only in DESIGN.md.
 
 ## M5 Presence, UV, packaging
 

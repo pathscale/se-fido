@@ -18,7 +18,7 @@ declarations, no C, C++, Objective-C or Swift source and no `-sys` crates.
 | `se-fido-store` | Credential index encrypted with AES-256-GCM and an atomic monotonic signature counter, on disk. |
 | `backend-se` | Secure Enclave keys via Security.framework, storage key from SE ECDH + HKDF, `se-probe` binary. macOS only. |
 | `transport-test` | In-memory CTAPHID host and a relying-party verifier, for end-to-end runs. |
-| `transport-mac` | HID report descriptor, device properties, IOKit declarations. No device creation yet. See `crates/transport-mac/DESIGN.md`. |
+| `transport-mac` | Virtual HID via IOHIDUserDevice (create/activate only with `se-fido-device --run`). See DESIGN.md and DEPLOY.md. |
 | `fixtures` | Fixture runner (not published). |
 
 Requests are parsed zero copy: byte and text strings are ranges into the
@@ -69,6 +69,7 @@ default.
     cargo run -p fixtures -- check
     target/debug/se-probe            # SE capability probe, no Touch ID
     cargo run -p fixtures -- se      # end to end on the real SE, no Touch ID
+    target/debug/se-fido-device      # dry run only; see DEPLOY.md before --run
 
 There are no unit tests; behaviour is pinned by fixtures with byte-for-byte
 expected outputs (`fixtures/README.md`). `se-probe --touchid` creates a key
@@ -79,7 +80,10 @@ that needs Touch ID per use and will prompt.
 - Whether another process (or the same binary after re-signing) can use a
   stored `toid` blob.
 - Behaviour with Touch ID protected keys (`--touchid` not run).
-- Anything involving a real browser: no virtual HID device exists yet.
+- Browser acceptance of the virtual HID device (needs DEPLOY.md steps;
+  Safari via AuthenticationServices is the biggest unknown).
+- Whether `amfi_get_out_of_my_way=1` plus `csrutil disable` is sufficient
+  on macOS 26 for an ad-hoc binary with the restricted entitlement.
 
 ## Licence
 
