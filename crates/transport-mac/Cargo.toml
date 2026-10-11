@@ -1,6 +1,6 @@
 [package]
 name = "transport-mac"
-description = "macOS virtual HID transport: report descriptor, device properties and IOKit declarations (no device creation yet)"
+description = "macOS virtual HID transport over IOHIDUserDevice"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,3 +12,11 @@ default = ["std"]
 std = []
 
 [dependencies]
+ctaphid = { workspace = true, features = ["std"] }
+ctap2 = { workspace = true, features = ["std"] }
+se-fido-store.workspace = true
+backend-se.workspace = true
+
+[[bin]]
+name = "se-fido-device"
+path = "src/bin/se-fido-device.rs"

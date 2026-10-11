@@ -1,13 +1,27 @@
-//! macOS transport skeleton. See DESIGN.md.
+//! macOS virtual HID transport for CTAPHID.
 //!
-//! Holds the pieces that do not depend on how the virtual device gets
-//! created: the FIDO HID report descriptor and the device property set.
-//! [`ffi`] declares the IOKit user-space HID device API by hand. Nothing in
-//! this crate creates a device or calls into IOKit yet.
+//! Pure pieces (`REPORT_DESCRIPTOR`, [`properties`], Block layout constants)
+//! are available on every target. Creating an `IOHIDUserDevice` is macOS-only
+//! and lives in [`device`]. See DESIGN.md and DEPLOY.md.
+//!
+//! This crate never activates a device unless [`device::run`] is called, which
+//! the `se-fido-device` binary only does with an explicit `--run` flag.
 
-#![no_std]
-#![forbid(unsafe_code)]
+#![cfg_attr(not(feature = "std"), no_std)]
 
+#[cfg(not(feature = "std"))]
+extern crate alloc;
+#[cfg(not(feature = "std"))]
+use alloc::string::String;
+#[cfg(feature = "std")]
+use std::string::String;
+
+#[cfg(target_os = "macos")]
+pub mod block;
+#[cfg(target_os = "macos")]
+mod cf;
+#[cfg(target_os = "macos")]
+pub mod device;
 #[cfg(target_os = "macos")]
 pub mod ffi;
 
@@ -18,10 +32,10 @@ pub const FIDO_USAGE_CTAPHID: u16 = 0x01;
 /// Input and output report size in bytes.
 pub const REPORT_SIZE: usize = 64;
 
-/// HID report descriptor for a CTAPHID device: one application collection
-/// on the FIDO page with a 64-byte input report (usage 0x20) and a 64-byte
-/// output report (usage 0x21), no report IDs. Browsers find security keys by
-/// this usage page and usage.
+/// HID report descriptor for a CTAPHID device: one application collection on
+/// the FIDO page with a 64-byte input report (usage 0x20) and a 64-byte output
+/// report (usage 0x21), no report IDs. Browsers find security keys by this
+/// usage page and usage.
 pub const REPORT_DESCRIPTOR: [u8; 34] = [
     0x06, 0xd0, 0xf1, // Usage Page (FIDO)
     0x09, 0x01, // Usage (CTAPHID)
@@ -41,9 +55,12 @@ pub const REPORT_DESCRIPTOR: [u8; 34] = [
     0xc0, // End Collection
 ];
 
-/// Identity the virtual device presents. Vendor and product IDs are 0:
-/// browsers match on the usage page, and we must not claim a USB vendor ID
-/// we do not own.
+/// Identity the virtual device presents.
+///
+/// VendorID/ProductID are our own placeholders, not USB-IF assignments. The
+/// transport is Virtual (IOHIDKeys.h `kIOHIDTransportVirtualValue`); browsers
+/// match on usage page 0xF1D0, not on these numbers. Replace them if you ever
+/// register real IDs. Do not copy another vendor's IDs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceIdentity {
     pub vendor_id: u32,
@@ -54,16 +71,17 @@ pub struct DeviceIdentity {
     pub transport: &'static str,
 }
 
+/// Placeholder VID 0x1209 (pid.codes open domain), PID 0x51D0 (se-fido).
 pub const DEFAULT_IDENTITY: DeviceIdentity = DeviceIdentity {
-    vendor_id: 0,
-    product_id: 0,
+    vendor_id: 0x1209,
+    product_id: 0x51d0,
     product: "se-fido",
     manufacturer: "se-fido",
     serial: "0",
     transport: "Virtual",
 };
 
-/// Property keys of the IOHIDUserDevice property dictionary (IOHIDKeys.h).
+/// Property keys (IOHIDDeviceKeys.h).
 pub mod keys {
     pub const REPORT_DESCRIPTOR: &str = "ReportDescriptor";
     pub const VENDOR_ID: &str = "VendorID";
@@ -86,8 +104,7 @@ pub enum PropValue {
     Data(&'static [u8]),
 }
 
-/// The property set passed to IOHIDUserDeviceCreateWithProperties, as plain
-/// data. Converting it to a CFDictionary happens in the M4 device code.
+/// Property set for `IOHIDUserDeviceCreateWithProperties`.
 pub fn properties(id: &DeviceIdentity) -> [(&'static str, PropValue); 11] {
     [
         (keys::REPORT_DESCRIPTOR, PropValue::Data(&REPORT_DESCRIPTOR)),
@@ -114,4 +131,23 @@ pub fn properties(id: &DeviceIdentity) -> [(&'static str, PropValue); 11] {
             PropValue::Number(REPORT_SIZE as u32),
         ),
     ]
+}
+
+/// Stable text form of the property set (for fixtures).
+pub fn properties_text(id: &DeviceIdentity) -> String {
+    let mut s = String::new();
+    for (k, v) in properties(id) {
+        match v {
+            PropValue::Number(n) => s.push_str(&format!("{k}=0x{n:04x}\n")),
+            PropValue::Text(t) => s.push_str(&format!("{k}=\"{t}\"\n")),
+            PropValue::Data(d) => {
+                s.push_str(&format!("{k}=data[{}]=", d.len()));
+                for b in d {
+                    s.push_str(&format!("{b:02x}"));
+                }
+                s.push('\n');
+            }
+        }
+    }
+    s
 }
