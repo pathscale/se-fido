@@ -1,4 +1,6 @@
-//! Opt-in end-to-end run on the real Secure Enclave. No Touch ID: keys use
+//! Opt-in end-to-end run on the real Secure Enclave. No Touch ID: credentials
+//! default to UvPolicy::None (the authenticator default, Presence, would make
+//! the SE prompt, which a non-interactive run cannot answer), keys use
 //! AccessPolicy::None and presence is simulated (ScriptedPresence). Output
 //! is not compared byte for byte (keys and signatures are random); every
 //! step is verified relying-party side.
@@ -7,7 +9,7 @@ use crate::tmp_root;
 use backend_se::{storage_key, AccessPolicy, SeBackend, StorageMode, SystemEntropy};
 use ctap2::cbor::{encode, Out};
 use ctap2::soft::ScriptedPresence;
-use ctap2::{Authenticator, AuthenticatorConfig};
+use ctap2::{Authenticator, AuthenticatorConfig, UvPolicy};
 use se_fido_store::FileStore;
 use std::time::Instant;
 use transport_test::{rp, Host};
@@ -27,7 +29,10 @@ fn open(dir: &std::path::Path) -> Result<Auth, String> {
         SeBackend::new(StorageMode::Blob, AccessPolicy::None),
         store,
         ScriptedPresence::approve(),
-        AuthenticatorConfig::default(),
+        AuthenticatorConfig {
+            default_uv_policy: UvPolicy::None,
+            ..AuthenticatorConfig::default()
+        },
     ))
 }
 
