@@ -1,0 +1,13 @@
+> make pinparam= expect=PinNotSet
+  presence Probe rp=example.com uv=false
+  status PinNotSet (0x35)
+> get pinparam= expect=PinNotSet
+  presence Probe rp=example.com uv=false
+  status PinNotSet (0x35)
+> make pinparam=01010101010101010101010101010101 expect=MissingParameter
+  status MissingParameter (0x14)
+> make pinparam=01010101010101010101010101010101 pinproto=1 expect=InvalidParameter
+  status InvalidParameter (0x02)
+> check store=0 keys=0
+  store=0
+  keys=0

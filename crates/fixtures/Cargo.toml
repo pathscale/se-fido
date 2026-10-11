@@ -1,0 +1,19 @@
+[package]
+name = "fixtures"
+description = "Fixture runner: replays committed inputs and compares byte-for-byte expected outputs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ctaphid = { workspace = true, features = ["std"] }
+ctap2 = { workspace = true, features = ["std"] }
+se-fido-store.workspace = true
+transport-test.workspace = true
+transport-mac.workspace = true
+sha2.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+backend-se.workspace = true

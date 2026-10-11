@@ -1,0 +1,12 @@
+> config attestation=none
+> make
+  presence MakeCredential rp=example.com uv=false
+  status Ok (0x00)
+  body {1: "none", 2: h"a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19474100000001c7ce4e586fd24eb8b1931d528be838a50020d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6aa501020326200121582068d6746ed9a68be0781a9b8c3e4d12aba63c124e4cc90d9b9fe85d565c1a9f6322582044fb071ff95860902ad8c36a87a6d3a8645ac4ec0fccea4d232a1c6bcfbcd39b", 3: {}}
+  rp registered $1 fmt=none att=none flags=UP|AT counter=1 aaguid=c7ce4e586fd24eb8b1931d528be838a5
+  rp id=d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6a pubkey=0468d6746ed9a68be0781a9b8c3e4d12aba63c124e4cc90d9b9fe85d565c1a9f6344fb071ff95860902ad8c36a87a6d3a8645ac4ec0fccea4d232a1c6bcfbcd39b
+> get allow=$1 want=$1
+  presence GetAssertion rp=example.com uv=false
+  status Ok (0x00)
+  body {1: {"id": h"d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6a", "type": "public-key"}, 2: h"a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19470100000002", 3: h"3045022064369209c2d92c37304809fc8d03e80dbfe15079709d5011012400545ce413b8022100e5b3f1dd7ad963173c963a895a9517b560178a60450d2a33623ec905496b32cf"}
+  rp assertion $1 flags=UP counter=2 sig=valid user_id=- name=- display=- n=-

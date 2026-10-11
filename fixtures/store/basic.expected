@@ -1,0 +1,54 @@
+> open
+  opened count=0 counter=0
+> insert id=c1 rp=a.com rk
+  inserted
+  credentials.bin size=187 mode=600 sha256=d6970a632842ad218a600b82f9304c52432e0795b2b11c7ea481d6ca32acfc79
+  counter absent
+> insert id=c2 rp=a.com
+  inserted
+  credentials.bin size=327 mode=600 sha256=8111fd2cda374f2f678fb2a8c5bdb5f7bf60f3b6030ca0e4c1669fe58fde2d48
+  counter absent
+> insert id=c3 rp=b.com rk
+  inserted
+  credentials.bin size=484 mode=600 sha256=e1e0376fed5e7ac7e13ac800769f5c16bcf8f0016f86a78df2cd313042debec4
+  counter absent
+> open
+  opened count=3 counter=0
+> count
+  count=3
+> get id=c2
+  id=9c0abe51c6e6655d rp=a.com user=6332 rk=false created=2 name=-
+> list rp=a.com
+  list
+    id=d0f631ca1ddba8db rp=a.com user=6331 rk=true created=1 name=alice@example.com
+    id=9c0abe51c6e6655d rp=a.com user=6332 rk=false created=2 name=-
+> list rp=b.com
+  list
+    id=7c1c97df17c06692 rp=b.com user=6333 rk=true created=3 name=alice@example.com
+> list rp=c.com
+  list
+> get id=nope expect=Missing
+  missing
+> remove id=c1
+  removed id=d0f631ca1ddba8db rp=a.com user=6331 rk=true created=1 name=alice@example.com
+  credentials.bin size=327 mode=600 sha256=3cf9b2e0a52cf23e19a9fbdc8739155ce7f5426008c0a4dcdeedd648f405c8c4
+  counter absent
+> remove id=c1 expect=Missing
+  missing
+> open
+  opened count=2 counter=0
+> count
+  count=2
+> get id=c1 expect=Missing
+  missing
+> clear
+  cleared 2
+  credentials.bin size=30 mode=600 sha256=4e5f81319069ca652f15787751221628291b07adf59f28982510034bc66b4b24
+  counter absent
+> open
+  opened count=0 counter=0
+> count
+  count=0
+> files
+  dir mode=700
+    credentials.bin size=30 mode=600 sha256=4e5f81319069ca652f15787751221628291b07adf59f28982510034bc66b4b24

@@ -1,0 +1,35 @@
+> make user=u1 rk
+  presence MakeCredential rp=example.com uv=false
+  status Ok (0x00)
+  body {1: "packed", 2: h"a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19474100000001c7ce4e586fd24eb8b1931d528be838a50020d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6aa501020326200121582068d6746ed9a68be0781a9b8c3e4d12aba63c124e4cc90d9b9fe85d565c1a9f6322582044fb071ff95860902ad8c36a87a6d3a8645ac4ec0fccea4d232a1c6bcfbcd39b", 3: {"alg": -7, "sig": h"3045022041ccbd31a2441e9dd972e00187d55b3c17d75247f5317663b5896e8a144fea8a022100fe2a0e4d411580dbf6be6fedb716f99781246a6d98eec84c89842e31aa19a2dc"}}
+  rp registered $1 fmt=packed att=self-valid flags=UP|AT counter=1 aaguid=c7ce4e586fd24eb8b1931d528be838a5
+  rp id=d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6a pubkey=0468d6746ed9a68be0781a9b8c3e4d12aba63c124e4cc90d9b9fe85d565c1a9f6344fb071ff95860902ad8c36a87a6d3a8645ac4ec0fccea4d232a1c6bcfbcd39b
+> make user=u2
+  presence MakeCredential rp=example.com uv=false
+  status Ok (0x00)
+  body {1: "packed", 2: h"a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19474100000002c7ce4e586fd24eb8b1931d528be838a5002072e1b3120679f5ea21d0f7240bf55d696f3934ec475fce74194e4db00bbd9678a501020326200121582037c6a2788beab7f927e9d1b68094b900c502d48a09ca9383ed2db36201201a352258200e84e2185d9e2596418c989e68f60e36b06c988c91b6377fa937e6c4a20afaaa", 3: {"alg": -7, "sig": h"3046022100ec7d65b53105c1215e7706ec0369a26953c98b914dc4dd9d42cbd28a96cb1fcf022100ba603c10990658dd2f89cfc68158dd5be814bacafeaf2b6acfa825ecd1392407"}}
+  rp registered $2 fmt=packed att=self-valid flags=UP|AT counter=2 aaguid=c7ce4e586fd24eb8b1931d528be838a5
+  rp id=72e1b3120679f5ea21d0f7240bf55d696f3934ec475fce74194e4db00bbd9678 pubkey=0437c6a2788beab7f927e9d1b68094b900c502d48a09ca9383ed2db36201201a350e84e2185d9e2596418c989e68f60e36b06c988c91b6377fa937e6c4a20afaaa
+> check store=2 keys=2 counter=2
+  store=2
+  keys=2
+  counter=2
+> reset
+  presence Reset rp=- uv=false
+  status Ok (0x00)
+> check store=0 keys=0 counter=2
+  store=0
+  keys=0
+  counter=2
+> get allow=$1 expect=NoCredentials
+  presence GetAssertion rp=example.com uv=false
+  status NoCredentials (0x2e)
+> get expect=NoCredentials
+  presence GetAssertion rp=example.com uv=false
+  status NoCredentials (0x2e)
+> make user=u3
+  presence MakeCredential rp=example.com uv=false
+  status Ok (0x00)
+  body {1: "packed", 2: h"a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19474100000003c7ce4e586fd24eb8b1931d528be838a500203b09bd009b45eea5712b2766c275c96072f4d8f72a789539121364897b51c267a5010203262001215820bec47cb2c6dcceff5de63f2fe2fcd622fcd9cfb83449bc507a985dfe6f59f91c2258209655c7dacb4095f098d56fea05fc4e24ef6878e42968ee8a4d123d9ce82d2b4c", 3: {"alg": -7, "sig": h"3044022003be7503991d0d6963d74c364f9e9465c7f346fc8ad419b2b4d6cda0456212e20220154eea451e9876bf365be3f6c7e571720f20a54ecbc702554c4d7f0b431d6f16"}}
+  rp registered $3 fmt=packed att=self-valid flags=UP|AT counter=3 aaguid=c7ce4e586fd24eb8b1931d528be838a5
+  rp id=3b09bd009b45eea5712b2766c275c96072f4d8f72a789539121364897b51c267 pubkey=04bec47cb2c6dcceff5de63f2fe2fcd622fcd9cfb83449bc507a985dfe6f59f91c9655c7dacb4095f098d56fea05fc4e24ef6878e42968ee8a4d123d9ce82d2b4c

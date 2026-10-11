@@ -1,0 +1,10 @@
+> getinfo
+  status Ok (0x00)
+  body {1: ["FIDO_2_0"], 3: h"c7ce4e586fd24eb8b1931d528be838a5", 4: {"rk": true, "up": true, "uv": true, "plat": false}, 5: 7609, 9: ["usb"], 10: [{"alg": -7, "type": "public-key"}]}
+> raw 04a0
+  status Ok (0x00)
+  body {1: ["FIDO_2_0"], 3: h"c7ce4e586fd24eb8b1931d528be838a5", 4: {"rk": true, "up": true, "uv": true, "plat": false}, 5: 7609, 9: ["usb"], 10: [{"alg": -7, "type": "public-key"}]}
+> config uv=off
+> getinfo
+  status Ok (0x00)
+  body {1: ["FIDO_2_0"], 3: h"c7ce4e586fd24eb8b1931d528be838a5", 4: {"rk": true, "up": true, "plat": false}, 5: 7609, 9: ["usb"], 10: [{"alg": -7, "type": "public-key"}]}

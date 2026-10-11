@@ -1,0 +1,12 @@
+> seed other
+> make rp=example.com user=user1
+  presence MakeCredential rp=example.com uv=false
+  status Ok (0x00)
+  body {1: "packed", 2: h"a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19474100000001c7ce4e586fd24eb8b1931d528be838a500208f073e50c2b82f79c640e3f1adacea7b5ae3f8d96c4643031947ff24f3d9ea50a5010203262001215820994cb526e2faf5cca66573a663d2221a551ef1faf097c550fb9d91b552622499225820fa61d1a12e32f05c6b56f48d982e68f815ac15328ba479480de708f0b6b043bf", 3: {"alg": -7, "sig": h"304402206fec1400d47038a2617754eaaac1ca3051cc9e3108826af24017141e7cc2c3a702203e69b306545c53aadd5e84ee7e5d1a5868ec804e14a8a62a0ca62a52ef27641d"}}
+  rp registered $1 fmt=packed att=self-valid flags=UP|AT counter=1 aaguid=c7ce4e586fd24eb8b1931d528be838a5
+  rp id=8f073e50c2b82f79c640e3f1adacea7b5ae3f8d96c4643031947ff24f3d9ea50 pubkey=04994cb526e2faf5cca66573a663d2221a551ef1faf097c550fb9d91b552622499fa61d1a12e32f05c6b56f48d982e68f815ac15328ba479480de708f0b6b043bf
+> get allow=$1 want=$1
+  presence GetAssertion rp=example.com uv=false
+  status Ok (0x00)
+  body {1: {"id": h"8f073e50c2b82f79c640e3f1adacea7b5ae3f8d96c4643031947ff24f3d9ea50", "type": "public-key"}, 2: h"a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19470100000002", 3: h"3045022100ab085f1e5263b3994c8b3336d5049229b019996fc7327c887a1c0881140b57a702204e3a2a22263779251b69df4d6251554c3d1d957fd78239ebe258de76fca7a5bf"}
+  rp assertion $1 flags=UP counter=2 sig=valid user_id=- name=- display=- n=-

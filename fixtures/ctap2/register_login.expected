@@ -1,0 +1,29 @@
+> make rp=example.com user=user1 flags=UP|AT
+  presence MakeCredential rp=example.com uv=false
+  status Ok (0x00)
+  body {1: "packed", 2: h"a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19474100000001c7ce4e586fd24eb8b1931d528be838a50020d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6aa501020326200121582068d6746ed9a68be0781a9b8c3e4d12aba63c124e4cc90d9b9fe85d565c1a9f6322582044fb071ff95860902ad8c36a87a6d3a8645ac4ec0fccea4d232a1c6bcfbcd39b", 3: {"alg": -7, "sig": h"304402203c8990b96c8f594aa409f687730c9f421aef55b2488c7b2ba48eba3ae6c165eb02207add51c25a0eb752f01d6295e4b9ed55a09db009bc4397c0819144012e9f3e64"}}
+  rp registered $1 fmt=packed att=self-valid flags=UP|AT counter=1 aaguid=c7ce4e586fd24eb8b1931d528be838a5
+  rp id=d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6a pubkey=0468d6746ed9a68be0781a9b8c3e4d12aba63c124e4cc90d9b9fe85d565c1a9f6344fb071ff95860902ad8c36a87a6d3a8645ac4ec0fccea4d232a1c6bcfbcd39b
+> get rp=example.com allow=$1 want=$1 flags=UP
+  presence GetAssertion rp=example.com uv=false
+  status Ok (0x00)
+  body {1: {"id": h"d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6a", "type": "public-key"}, 2: h"a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19470100000002", 3: h"3045022100fe7a11a0e32adbb9a39e2de7a2e2640cd29f8edbee920a7f6ad877065d0c794b02205c43e590bf821136bd235040390f168b627de4fadc77c0e23cd7f10d2fc68473"}
+  rp assertion $1 flags=UP counter=2 sig=valid user_id=- name=- display=- n=-
+> get rp=example.com allow=$1 want=$1 flags=UP
+  presence GetAssertion rp=example.com uv=false
+  status Ok (0x00)
+  body {1: {"id": h"d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6a", "type": "public-key"}, 2: h"a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19470100000003", 3: h"30440220404c47beeccb08f8294019079868e261ea5cdad1d37dea27e678454cdfd6562d02202ccf2d4a4d32793d965c0e8b74360d19d23f32be1441a09001abf4222a0bf7ba"}
+  rp assertion $1 flags=UP counter=3 sig=valid user_id=- name=- display=- n=-
+> get rp=evil.com allow=$1 expect=NoCredentials
+  presence GetAssertion rp=evil.com uv=false
+  status NoCredentials (0x2e)
+> get rp=example.com allow=00010203 expect=NoCredentials
+  presence GetAssertion rp=example.com uv=false
+  status NoCredentials (0x2e)
+> get rp=example.com expect=NoCredentials
+  presence GetAssertion rp=example.com uv=false
+  status NoCredentials (0x2e)
+> check store=1 keys=1 presence=6
+  store=1
+  keys=1
+  presence=6

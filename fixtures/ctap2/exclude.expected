@@ -1,0 +1,18 @@
+> make rp=example.com user=u1
+  presence MakeCredential rp=example.com uv=false
+  status Ok (0x00)
+  body {1: "packed", 2: h"a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19474100000001c7ce4e586fd24eb8b1931d528be838a50020d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6aa501020326200121582068d6746ed9a68be0781a9b8c3e4d12aba63c124e4cc90d9b9fe85d565c1a9f6322582044fb071ff95860902ad8c36a87a6d3a8645ac4ec0fccea4d232a1c6bcfbcd39b", 3: {"alg": -7, "sig": h"3044022073559c911db57e69bba1c4ab2648a089ecdb32bd9d871e6f27664085591d98b502207508595bdcc821e70e87098e584c09cd3ebcd75f1c82a4784d6d9825624f38e3"}}
+  rp registered $1 fmt=packed att=self-valid flags=UP|AT counter=1 aaguid=c7ce4e586fd24eb8b1931d528be838a5
+  rp id=d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6a pubkey=0468d6746ed9a68be0781a9b8c3e4d12aba63c124e4cc90d9b9fe85d565c1a9f6344fb071ff95860902ad8c36a87a6d3a8645ac4ec0fccea4d232a1c6bcfbcd39b
+> make rp=example.com user=u2 exclude=$1 expect=CredentialExcluded
+  presence Excluded rp=example.com uv=false
+  status CredentialExcluded (0x19)
+> make rp=other.com user=u2 exclude=$1
+  presence MakeCredential rp=other.com uv=false
+  status Ok (0x00)
+  body {1: "packed", 2: h"c6d58b4b377f8cea411e772bea9e5338bdd3259d6ac4a23f82cd676c0b6075084100000002c7ce4e586fd24eb8b1931d528be838a5002072e1b3120679f5ea21d0f7240bf55d696f3934ec475fce74194e4db00bbd9678a501020326200121582037c6a2788beab7f927e9d1b68094b900c502d48a09ca9383ed2db36201201a352258200e84e2185d9e2596418c989e68f60e36b06c988c91b6377fa937e6c4a20afaaa", 3: {"alg": -7, "sig": h"3045022005bb88189fd27e5c8cce63827887efdc46b7607a040644d295633577c055dfe8022100ad2ac41c404d26de3884ed69dd370e45eee001833bec642a13ee72623ccad440"}}
+  rp registered $2 fmt=packed att=self-valid flags=UP|AT counter=2 aaguid=c7ce4e586fd24eb8b1931d528be838a5
+  rp id=72e1b3120679f5ea21d0f7240bf55d696f3934ec475fce74194e4db00bbd9678 pubkey=0437c6a2788beab7f927e9d1b68094b900c502d48a09ca9383ed2db36201201a350e84e2185d9e2596418c989e68f60e36b06c988c91b6377fa937e6c4a20afaaa
+> check store=2 keys=2
+  store=2
+  keys=2

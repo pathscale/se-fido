@@ -1,0 +1,54 @@
+> open
+  opened count=0 counter=0
+> counter
+  counter=1
+  credentials.bin absent
+  counter size=12 mode=600 sha256=dd0123f064c3de932327d20df5c31be5b46ce06b6b5adc7ffa558a26b6ec7b1b
+> counter
+  counter=2
+  credentials.bin absent
+  counter size=12 mode=600 sha256=dbddfaf75a38a4f82ab4e23e61b7374dbf6503e67024029ad6353ecce898ad1f
+> counter
+  counter=3
+  credentials.bin absent
+  counter size=12 mode=600 sha256=54efaca539df23e5af7fc31c1292d748e2fa0ed08b109ae528d7c397456caeb2
+> open
+  opened count=0 counter=3
+> counter
+  counter=4
+  credentials.bin absent
+  counter size=12 mode=600 sha256=617472311216014f63de96ba2dc82394cfb679198102b95862c4d9b83f2dc124
+> clear
+  cleared 0
+  credentials.bin size=30 mode=600 sha256=2c95f2b801be0bae34afa72193f480eb9a8eba50ba3b7b72f6beefb16fb5f82a
+  counter size=12 mode=600 sha256=617472311216014f63de96ba2dc82394cfb679198102b95862c4d9b83f2dc124
+> open
+  opened count=0 counter=4
+> counter
+  counter=5
+  credentials.bin size=30 mode=600 sha256=2c95f2b801be0bae34afa72193f480eb9a8eba50ba3b7b72f6beefb16fb5f82a
+  counter size=12 mode=600 sha256=a30fb70e4e5b36695ad5570336f741e12d0492e1ab1c121b88bfc07b22374029
+> write file=counter hex=6a756e6b
+  wrote 4 bytes
+> open expect=Corrupt
+  error Corrupt: store corrupt or wrong key: counter file malformed
+> setcounter 7
+  counter file set to 7
+> tamper file=counter at=-1
+  flipped bit 0 of byte 11
+> open expect=Corrupt
+  error Corrupt: store corrupt or wrong key: counter checksum mismatch
+> setcounter 4294967294
+  counter file set to 4294967294
+> open
+  opened count=0 counter=4294967294
+> counter
+  counter=4294967295
+  credentials.bin size=30 mode=600 sha256=2c95f2b801be0bae34afa72193f480eb9a8eba50ba3b7b72f6beefb16fb5f82a
+  counter size=12 mode=600 sha256=dea0bdb054dc78b01ceeef5f146869e89cf0af954a46e85ad6d9d4ab3a932cf2
+> counter expect=CounterExhausted
+  error CounterExhausted: signature counter exhausted
+> open
+  opened count=0 counter=4294967295
+> counter expect=CounterExhausted
+  error CounterExhausted: signature counter exhausted

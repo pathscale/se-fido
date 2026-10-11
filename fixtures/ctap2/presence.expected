@@ -1,0 +1,33 @@
+> presence deny
+> make expect=OperationDenied
+  presence MakeCredential rp=example.com uv=false
+  status OperationDenied (0x27)
+> selection expect=OperationDenied
+  presence Selection rp=- uv=false
+  status OperationDenied (0x27)
+> reset expect=OperationDenied
+  presence Reset rp=- uv=false
+  status OperationDenied (0x27)
+> presence uvfail
+> make expect=OperationDenied
+  presence MakeCredential rp=example.com uv=false
+  status OperationDenied (0x27)
+> presence cancel
+> make expect=KeepaliveCancel
+  presence MakeCredential rp=example.com uv=false
+  status KeepaliveCancel (0x2d)
+> selection expect=KeepaliveCancel
+  presence Selection rp=- uv=false
+  status KeepaliveCancel (0x2d)
+> presence timeout
+> make expect=UserActionTimeout
+  presence MakeCredential rp=example.com uv=false
+  status UserActionTimeout (0x2f)
+> check store=0 keys=0 counter=0
+  store=0
+  keys=0
+  counter=0
+> presence approve
+> selection
+  presence Selection rp=- uv=false
+  status Ok (0x00)

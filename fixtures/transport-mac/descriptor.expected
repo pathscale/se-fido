@@ -1,0 +1,31 @@
+> descriptor
+  34 bytes sha256=f700d2c7f19d0de478ff93d3d6b6f11d80b1a166823f03227e4d25db68a42984
+  Usage Page 0xf1d0
+  Usage 0x1
+  Collection 0x1
+    Usage 0x20
+    Logical Minimum 0x0
+    Logical Maximum 0xff
+    Report Size 0x8
+    Report Count 0x40
+    Input 0x2
+    Usage 0x21
+    Logical Minimum 0x0
+    Logical Maximum 0xff
+    Report Size 0x8
+    Report Count 0x40
+    Output 0x2
+  End Collection 0x0
+  input report 64 bytes, output report 64 bytes
+> properties
+  ReportDescriptor = data[34] sha256=f700d2c7f19d0de4
+  VendorID = 0x0
+  ProductID = 0x0
+  Product = "se-fido"
+  Manufacturer = "se-fido"
+  SerialNumber = "0"
+  Transport = "Virtual"
+  PrimaryUsagePage = 0xf1d0
+  PrimaryUsage = 0x1
+  MaxInputReportSize = 0x40
+  MaxOutputReportSize = 0x40

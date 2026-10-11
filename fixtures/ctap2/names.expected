@@ -1,0 +1,16 @@
+> make user=u1 rk name=éééééééééééééééééééééééééééééééééééééééé display=Alice_Example
+  presence MakeCredential rp=example.com uv=false
+  status Ok (0x00)
+  body {1: "packed", 2: h"a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19474100000001c7ce4e586fd24eb8b1931d528be838a50020d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6aa501020326200121582068d6746ed9a68be0781a9b8c3e4d12aba63c124e4cc90d9b9fe85d565c1a9f6322582044fb071ff95860902ad8c36a87a6d3a8645ac4ec0fccea4d232a1c6bcfbcd39b", 3: {"alg": -7, "sig": h"3046022100c8d0289a54407e6ce0da9d4b918d3b68aea0eb0b2ae5f2c5c64acc46a507d6ee022100ced5dc0aac72340efb0d9f95e2fdc89a49167fe34cb3d490b1c5943841833eff"}}
+  rp registered $1 fmt=packed att=self-valid flags=UP|AT counter=1 aaguid=c7ce4e586fd24eb8b1931d528be838a5
+  rp id=d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6a pubkey=0468d6746ed9a68be0781a9b8c3e4d12aba63c124e4cc90d9b9fe85d565c1a9f6344fb071ff95860902ad8c36a87a6d3a8645ac4ec0fccea4d232a1c6bcfbcd39b
+> get uv pii=yes
+  presence GetAssertion rp=example.com uv=true
+  status Ok (0x00)
+  body {1: {"id": h"d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6a", "type": "public-key"}, 2: h"a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19470500000002", 3: h"3046022100ca6c4d0c10abd2f82caeae0035d4169baf97f778e21ec9bb74a796a93242caa1022100b00ce2ad39a392bbeaf5d3bad7e075244d2a92b2a4825b914c593901771c1006", 4: {"id": h"7531", "name": "éééééééééééééééééééééééééééééééé", "displayName": "Alice Example"}}
+  rp assertion $1 flags=UP|UV counter=2 sig=valid user_id=7531 name=éééééééééééééééééééééééééééééééé display=Alice Example n=-
+> get pii=no
+  presence GetAssertion rp=example.com uv=false
+  status Ok (0x00)
+  body {1: {"id": h"d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6a", "type": "public-key"}, 2: h"a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19470100000003", 3: h"304402207847649392d599c4687fbb182efda95544535983b96fb948a8e0f9435a7e54c702203b4a15b404d3b4bc866683ff5f2151c8c9740b4d73a55b518a002ca2f0fdabc0", 4: {"id": h"7531"}}
+  rp assertion $1 flags=UP counter=3 sig=valid user_id=7531 name=- display=- n=-

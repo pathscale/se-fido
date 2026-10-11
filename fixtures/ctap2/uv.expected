@@ -1,0 +1,34 @@
+> make rp=example.com user=u1 rk uv flags=UP|UV|AT
+  presence MakeCredential rp=example.com uv=true
+  status Ok (0x00)
+  body {1: "packed", 2: h"a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19474500000001c7ce4e586fd24eb8b1931d528be838a50020d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6aa501020326200121582068d6746ed9a68be0781a9b8c3e4d12aba63c124e4cc90d9b9fe85d565c1a9f6322582044fb071ff95860902ad8c36a87a6d3a8645ac4ec0fccea4d232a1c6bcfbcd39b", 3: {"alg": -7, "sig": h"30440220471d48876c33e042374de2094083366dfc8117bccaf796d87db2487bc3a9ec300220475b3ff5711011500be4b58977884541cc36fc433e8bc6f51c9d80eb369f92bc"}}
+  rp registered $1 fmt=packed att=self-valid flags=UP|UV|AT counter=1 aaguid=c7ce4e586fd24eb8b1931d528be838a5
+  rp id=d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6a pubkey=0468d6746ed9a68be0781a9b8c3e4d12aba63c124e4cc90d9b9fe85d565c1a9f6344fb071ff95860902ad8c36a87a6d3a8645ac4ec0fccea4d232a1c6bcfbcd39b
+> get rp=example.com uv flags=UP|UV pii=yes
+  presence GetAssertion rp=example.com uv=true
+  status Ok (0x00)
+  body {1: {"id": h"d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6a", "type": "public-key"}, 2: h"a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19470500000002", 3: h"3046022100a456ab11ad2530a8acf2ea5adb4bc92e04f55bdcb21c31c59934ef77c09368460221008273c8248997f58f2ca61cf143dff83d5694ae2abb246b3f93add8b788b91f9b", 4: {"id": h"7531", "name": "alice@example.com", "displayName": "Alice"}}
+  rp assertion $1 flags=UP|UV counter=2 sig=valid user_id=7531 name=alice@example.com display=Alice n=-
+> get rp=example.com up=false allow=$1 flags=-
+  status Ok (0x00)
+  body {1: {"id": h"d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6a", "type": "public-key"}, 2: h"a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19470000000003", 3: h"3046022100b5c3b4cdfa7eca7a0033a4f8b700e95cefee37830cc95c6f9d1de86c762a56ca0221009505f0ca239484784e10242f4cfa4907707e5a8126f4242a5f6d56a05f80a8b5", 4: {"id": h"7531"}}
+  rp assertion $1 flags=- counter=3 sig=valid user_id=7531 name=- display=- n=-
+> check presence=2
+  presence=2
+> presence nouv
+> make rp=example.com user=u2 uv expect=OperationDenied
+  presence MakeCredential rp=example.com uv=true
+  status OperationDenied (0x27)
+> check store=1
+  store=1
+> config uv=off
+> make rp=example.com user=u1 uv expect=UnsupportedOption
+  status UnsupportedOption (0x2b)
+> get rp=example.com uv expect=UnsupportedOption
+  status UnsupportedOption (0x2b)
+> make rp=example.com user=u1 flags=UP|AT
+  presence MakeCredential rp=example.com uv=false
+  status Ok (0x00)
+  body {1: "packed", 2: h"a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19474100000001c7ce4e586fd24eb8b1931d528be838a50020d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6aa501020326200121582068d6746ed9a68be0781a9b8c3e4d12aba63c124e4cc90d9b9fe85d565c1a9f6322582044fb071ff95860902ad8c36a87a6d3a8645ac4ec0fccea4d232a1c6bcfbcd39b", 3: {"alg": -7, "sig": h"3046022100f37b3b817068c84fb84ec6c60b561025f414097b439e7cc68916c73798ef2bb3022100932c52466c38f792e4086a078a805030887b2d6d5e136c2b601fb374c2ec189d"}}
+  rp registered $1 fmt=packed att=self-valid flags=UP|AT counter=1 aaguid=c7ce4e586fd24eb8b1931d528be838a5
+  rp id=d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6a pubkey=0468d6746ed9a68be0781a9b8c3e4d12aba63c124e4cc90d9b9fe85d565c1a9f6344fb071ff95860902ad8c36a87a6d3a8645ac4ec0fccea4d232a1c6bcfbcd39b
