@@ -11,10 +11,5 @@ publish.workspace = true
 name = "se_fido_store"
 
 [dependencies]
-ctap2.workspace = true
-ciborium.workspace = true
-aes-gcm.workspace = true
-rand.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true
+ctap2 = { workspace = true, features = ["std"] }
+aes-gcm = { workspace = true, features = ["aes", "alloc"] }
