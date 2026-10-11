@@ -622,8 +622,23 @@ impl Backend for SeBackend {
         SystemEntropy.fill(out);
     }
 
-    fn create_key(&mut self, _rp_id: &str, _user_id: &[u8]) -> Result<NewKey, BackendError> {
-        let (handle, sec1) = self.create().map_err(to_backend)?;
+    fn create_key(
+        &mut self,
+        _rp_id: &str,
+        _user_id: &[u8],
+        uv: ctap2::UvPolicy,
+    ) -> Result<NewKey, BackendError> {
+        let policy = match uv {
+            ctap2::UvPolicy::None => AccessPolicy::None,
+            ctap2::UvPolicy::Presence => AccessPolicy::UserPresence,
+            ctap2::UvPolicy::Biometry => AccessPolicy::BiometryCurrentSet,
+        };
+        let (handle, sec1) = SeBackend {
+            mode: self.mode,
+            policy,
+        }
+        .create()
+        .map_err(to_backend)?;
         let public_key = p256::PublicKey::from_sec1_bytes(&sec1)
             .map_err(|_| BackendError::Failed("invalid SE public key".into()))?;
         Ok(NewKey {

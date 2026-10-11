@@ -40,7 +40,7 @@
   rp assertion $2 flags=UP counter=7 sig=valid user_id=7532 name=- display=- n=2
 > getinfo
   status Ok (0x00)
-  body {1: ["FIDO_2_0"], 3: h"c7ce4e586fd24eb8b1931d528be838a5", 4: {"rk": true, "up": true, "uv": true, "plat": false}, 5: 7609, 9: ["usb"], 10: [{"alg": -7, "type": "public-key"}]}
+  body {1: ["FIDO_2_0", "FIDO_2_1"], 2: ["credProtect"], 3: h"c7ce4e586fd24eb8b1931d528be838a5", 4: {"rk": true, "up": true, "uv": true, "plat": false}, 5: 7609, 9: ["usb"], 10: [{"alg": -7, "type": "public-key"}]}
 > next expect=NotAllowed
   status NotAllowed (0x30)
 > time 1000

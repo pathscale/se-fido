@@ -36,7 +36,12 @@ impl<E: Entropy> Backend for SoftBackend<E> {
         self.entropy.fill(out);
     }
 
-    fn create_key(&mut self, _rp_id: &str, _user_id: &[u8]) -> Result<NewKey, BackendError> {
+    fn create_key(
+        &mut self,
+        _rp_id: &str,
+        _user_id: &[u8],
+        _uv: UvPolicy,
+    ) -> Result<NewKey, BackendError> {
         let sk = loop {
             let mut b = [0u8; 32];
             self.entropy.fill(&mut b);

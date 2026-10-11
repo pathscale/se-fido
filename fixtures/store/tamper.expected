@@ -4,7 +4,7 @@
   opened count=0 counter=0
 > insert id=c1 rp=secret-rp.example rk
   inserted
-  credentials.bin size=199 mode=600 sha256=c5c9c988e33cb2c011be4c11236a4563ac4574665b19f5d9962dea9d7b2a75e3
+  credentials.bin size=200 mode=600 sha256=d62f01cf3c9e6e52e1eb571ecb54221ee7e8f01de5b5572521e81d20f35d2f86
   counter absent
 > absent file=credentials.bin text=secret-rp.example
   secret-rp.example not present in credentials.bin
@@ -21,11 +21,11 @@
 > count
   count=1
 > tamper file=credentials.bin at=-20
-  flipped bit 0 of byte 179
+  flipped bit 0 of byte 180
 > open expect=Corrupt
   error Corrupt: store corrupt or wrong key: index authentication failed (wrong key or tampered)
 > tamper file=credentials.bin at=-20
-  flipped bit 0 of byte 179
+  flipped bit 0 of byte 180
 > open
   opened count=1 counter=0
 > count

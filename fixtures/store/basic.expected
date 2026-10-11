@@ -2,15 +2,15 @@
   opened count=0 counter=0
 > insert id=c1 rp=a.com rk
   inserted
-  credentials.bin size=187 mode=600 sha256=d6970a632842ad218a600b82f9304c52432e0795b2b11c7ea481d6ca32acfc79
+  credentials.bin size=188 mode=600 sha256=e336a66253c6aed37ff25fec9cdc454dff505db8c5d92a1b04901dac3b0d4f38
   counter absent
 > insert id=c2 rp=a.com
   inserted
-  credentials.bin size=327 mode=600 sha256=8111fd2cda374f2f678fb2a8c5bdb5f7bf60f3b6030ca0e4c1669fe58fde2d48
+  credentials.bin size=329 mode=600 sha256=6d1970dbc0a07f373ef963ea2d56dc484ea2d19d38ac9122b504b559ecaba173
   counter absent
 > insert id=c3 rp=b.com rk
   inserted
-  credentials.bin size=484 mode=600 sha256=e1e0376fed5e7ac7e13ac800769f5c16bcf8f0016f86a78df2cd313042debec4
+  credentials.bin size=487 mode=600 sha256=eb933dde42a31ee1bdb5eb13bc03001268803d769e8f20945cb0d239d4d7a916
   counter absent
 > open
   opened count=3 counter=0
@@ -31,7 +31,7 @@
   missing
 > remove id=c1
   removed id=d0f631ca1ddba8db rp=a.com user=6331 rk=true created=1 name=alice@example.com
-  credentials.bin size=327 mode=600 sha256=3cf9b2e0a52cf23e19a9fbdc8739155ce7f5426008c0a4dcdeedd648f405c8c4
+  credentials.bin size=329 mode=600 sha256=a6dce61a8a090188f9520d9ec731097041c29e82f2d80d762fe9e91ed1569901
   counter absent
 > remove id=c1 expect=Missing
   missing

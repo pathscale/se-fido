@@ -23,10 +23,17 @@ pub enum AttestationFormat {
 pub struct AuthenticatorConfig {
     pub aaguid: [u8; 16],
     pub attestation: AttestationFormat,
-    /// Advertise and perform built-in user verification (Touch ID).
-    pub builtin_uv: bool,
+    /// Default UV policy for newly created credentials.
+    ///
+    /// Default [`UvPolicy::Presence`]: SE keys use user presence (Touch ID or
+    /// device password). GetInfo advertises `uv` only when this supports UV.
+    pub default_uv_policy: UvPolicy,
     /// maxMsgSize in GetInfo (CTAPHID maximum by default).
     pub max_msg_size: u32,
+    /// Advertise FIDO_2_1 in versions (always with FIDO_2_0).
+    pub advertise_fido21: bool,
+    /// Advertise the credProtect extension (accepted and echoed; see PLAN).
+    pub advertise_cred_protect: bool,
 }
 
 impl Default for AuthenticatorConfig {
@@ -34,9 +41,18 @@ impl Default for AuthenticatorConfig {
         AuthenticatorConfig {
             aaguid: AAGUID,
             attestation: AttestationFormat::PackedSelf,
-            builtin_uv: true,
+            default_uv_policy: UvPolicy::Presence,
             max_msg_size: 7609,
+            advertise_fido21: true,
+            advertise_cred_protect: true,
         }
+    }
+}
+
+impl AuthenticatorConfig {
+    /// Whether GetInfo should list the `uv` option.
+    pub fn advertises_uv(&self) -> bool {
+        self.default_uv_policy.supports_uv()
     }
 }
 
@@ -202,11 +218,15 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
             (Out::Text("up"), Out::Bool(true)),
             (Out::Text("plat"), Out::Bool(false)),
         ];
-        if self.config.builtin_uv {
+        if self.config.advertises_uv() {
             options.push((Out::Text("uv"), Out::Bool(true)));
         }
-        encode(&Out::Map(vec![
-            (Out::Int(0x01), Out::Array(vec![Out::Text("FIDO_2_0")])),
+        let mut versions = vec![Out::Text("FIDO_2_0")];
+        if self.config.advertise_fido21 {
+            versions.push(Out::Text("FIDO_2_1"));
+        }
+        let mut map = vec![
+            (Out::Int(0x01), Out::Array(versions)),
             (Out::Int(0x03), Out::Bytes(&self.config.aaguid)),
             (Out::Int(0x04), Out::Map(options)),
             (Out::Int(0x05), Out::Int(self.config.max_msg_size as i64)),
@@ -218,7 +238,17 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
                     (Out::Text("type"), Out::Text("public-key")),
                 ])]),
             ),
-        ]))
+        ];
+        if self.config.advertise_cred_protect {
+            // 0x02: extensions. credProtect is accepted on make/get and echoed;
+            // enforcement of extension min levels is best-effort (see PLAN).
+            map.insert(
+                1,
+                (Out::Int(0x02), Out::Array(vec![Out::Text("credProtect")])),
+            );
+        }
+        // No clientPin: omit pinUvAuthProtocols (0x06).
+        encode(&Out::Map(map))
     }
 
     fn ask(
@@ -341,7 +371,7 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
             return Err(Status::InvalidOption);
         }
         let want_uv = opts.uv == Some(true);
-        if want_uv && !self.config.builtin_uv {
+        if want_uv && !self.config.advertises_uv() {
             return Err(Status::UnsupportedOption);
         }
         let rk = opts.rk == Some(true);
@@ -362,20 +392,26 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
             }
         }
 
+        let policy = self.config.default_uv_policy;
+        // Platform asked for UV but this authenticator's default policy cannot.
+        if want_uv && !policy.supports_uv() {
+            return Err(Status::UnsupportedOption);
+        }
         let presence = self.ask(
             PresenceKind::MakeCredential,
             Some(&rp_id),
             user_name.as_ref(),
-            want_uv,
+            want_uv && policy.supports_uv(),
         )?;
         let mut flags = FLAG_UP;
-        if presence.user_verified {
+        // UV bit only when the credential policy can enforce UV and presence agreed.
+        if policy.supports_uv() && presence.user_verified {
             flags |= FLAG_UV;
         }
 
         let key = self
             .backend
-            .create_key(rp_id.as_str(), &user_id)
+            .create_key(rp_id.as_str(), &user_id, policy)
             .map_err(backend_err)?;
         let mut cred_id = [0u8; CREDENTIAL_ID_LEN];
         self.backend.random(&mut cred_id);
@@ -397,6 +433,7 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
             public_key: Bytes::copy_from_slice(key.public_key.to_encoded_point(false).as_bytes()),
             discoverable: rk,
             created: counter as u64,
+            uv_policy: policy,
         });
 
         let cose = authdata::cose_key(&key.public_key);
@@ -532,7 +569,7 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
         }
         let want_up = opts.up.unwrap_or(true);
         let want_uv = opts.uv == Some(true);
-        if want_uv && !self.config.builtin_uv {
+        if want_uv && !self.config.advertises_uv() {
             return Err(Status::UnsupportedOption);
         }
 
@@ -566,8 +603,8 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
             if want_up {
                 flags |= FLAG_UP;
             }
+            // Provisional UV; cleared per credential if its policy is None.
             if p.user_verified {
-                flags |= FLAG_UV;
                 user_verified = true;
             }
         }
@@ -575,6 +612,11 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
             return Err(Status::NoCredentials);
         }
         let first = creds.remove(0);
+        if user_verified && first.uv_policy.supports_uv() {
+            flags |= FLAG_UV;
+        } else {
+            user_verified = false;
+        }
         let total = if !using_allow_list && !creds.is_empty() {
             Some(creds.len() + 1)
         } else {
@@ -592,7 +634,8 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
             self.pending = Some(Pending {
                 rp_id,
                 client_data_hash,
-                flags,
+                // Base flags without UV; UV is applied per credential policy.
+                flags: flags & !FLAG_UV,
                 user_verified,
                 remaining: creds,
                 started_ms: now_ms,
@@ -608,14 +651,12 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
             return Err(Status::NotAllowed);
         }
         let cred = p.remaining.remove(0);
-        let out = self.assertion(
-            &p.rp_id,
-            &p.client_data_hash,
-            p.flags,
-            p.user_verified,
-            &cred,
-            None,
-        )?;
+        let mut flags = p.flags & !FLAG_UV;
+        let uv = p.user_verified && cred.uv_policy.supports_uv();
+        if uv {
+            flags |= FLAG_UV;
+        }
+        let out = self.assertion(&p.rp_id, &p.client_data_hash, flags, uv, &cred, None)?;
         if !p.remaining.is_empty() {
             p.started_ms = now_ms;
             self.pending = Some(p);

@@ -240,10 +240,7 @@ fn open_authenticator(dir: PathBuf) -> Result<Auth, String> {
     let store =
         FileStore::open(dir.join("store"), &key, SystemEntropy).map_err(|e| e.to_string())?;
     let backend = SeBackend::new(StorageMode::Blob, AccessPolicy::None);
-    let cfg = AuthenticatorConfig {
-        builtin_uv: true,
-        ..AuthenticatorConfig::default()
-    };
+    let cfg = AuthenticatorConfig::default();
     Ok(Authenticator::new(backend, store, ImmediatePresence, cfg))
 }
 

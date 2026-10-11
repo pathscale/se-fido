@@ -1,6 +1,8 @@
-# authenticatorGetInfo with and without built-in UV
+# authenticatorGetInfo with and without UV (policy)
 getinfo
 # parameters after the command byte are ignored
 raw 04a0
-config uv=off
+config uv_policy=none
+getinfo
+config uv_policy=biometry
 getinfo

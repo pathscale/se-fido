@@ -44,6 +44,7 @@ fn cred(word: &str, rp: &str, rk: bool, created: u64) -> Credential {
         public_key: Bytes::from(pk),
         discoverable: rk,
         created,
+        uv_policy: ctap2::UvPolicy::Presence,
     }
 }
 

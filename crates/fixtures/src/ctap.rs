@@ -1,6 +1,6 @@
 //! CTAP2 fixtures on the deterministic software backend.
 //!
-//! Setup: `seed WORD`, `config attestation=packed|none uv=on|off capacity=N`,
+//! Setup: `seed WORD`, `config attestation=packed|none uv_policy=none|presence|biometry capacity=N`,
 //! `transport hid` (route every request through CTAPHID framing),
 //! `presence approve|deny|cancel|timeout|uvfail|nouv`, `time MS`,
 //! `check store=N keys=N counter=N presence=N`.
@@ -376,8 +376,17 @@ fn step(
                     _ => return Err(format!("bad attestation {v}")),
                 };
             }
+            if let Some(v) = a.get("uv_policy") {
+                cfg.default_uv_policy =
+                    ctap2::UvPolicy::parse(v).ok_or_else(|| format!("bad uv_policy {v}"))?;
+            }
+            // Backward-compatible alias: uv=on -> presence, uv=off -> none.
             if let Some(v) = a.get("uv") {
-                cfg.builtin_uv = v == "on";
+                cfg.default_uv_policy = match v {
+                    "on" => ctap2::UvPolicy::Presence,
+                    "off" => ctap2::UvPolicy::None,
+                    _ => return Err(format!("bad uv {v}")),
+                };
             }
             if let Some(n) = a.num("capacity")? {
                 *capacity = Some(n);

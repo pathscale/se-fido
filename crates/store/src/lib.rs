@@ -217,6 +217,7 @@ fn encrypt_index(
                 Out::Bytes(&c.public_key),
                 Out::Bool(c.discoverable),
                 Out::Int(c.created as i64),
+                Out::Int(c.uv_policy as u8 as i64),
             ])
         })
         .collect();
@@ -268,7 +269,7 @@ fn decrypt_index(cipher: &Aes256Gcm, blob: &[u8]) -> Result<Vec<Arc<Credential>>
 fn cred_from_value(v: &Value) -> Result<Credential, StoreError> {
     let bad = || StoreError::Corrupt("malformed credential record".into());
     let f = v.as_array().map_err(|_| bad())?;
-    if f.len() != 10 {
+    if f.len() != 10 && f.len() != 11 {
         return Err(bad());
     }
     let bytes = |i: usize| f[i].as_bytes().cloned().map_err(|_| bad());
@@ -292,6 +293,18 @@ fn cred_from_value(v: &Value) -> Result<Credential, StoreError> {
             .ok()
             .and_then(|i| u64::try_from(i).ok())
             .ok_or_else(bad)?,
+        // v1 records (10 fields) predate uv_policy; those keys were created with
+        // AccessPolicy::None, so treat them as None.
+        uv_policy: if f.len() >= 11 {
+            f[10]
+                .as_int()
+                .ok()
+                .and_then(|i| u8::try_from(i).ok())
+                .and_then(ctap2::UvPolicy::from_u8)
+                .ok_or_else(bad)?
+        } else {
+            ctap2::UvPolicy::None
+        },
     })
 }
 

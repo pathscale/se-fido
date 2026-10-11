@@ -4,6 +4,56 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::fmt;
 
+/// User verification policy for a credential key (chosen at creation).
+///
+/// Mapped to Secure Enclave access control on macOS. Soft backend stores the
+/// value for honest UP/UV flags only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum UvPolicy {
+    /// No SE user interaction. UV must not be claimed. UP comes from an
+    /// explicit non-biometric presence check (LocalAuthentication with
+    /// passcode allowed, or a fixture script).
+    None = 0,
+    /// Touch ID or device password on every private key use (`kSecAccessControlUserPresence`).
+    Presence = 1,
+    /// Touch ID with the currently enrolled set only (`kSecAccessControlBiometryCurrentSet`).
+    Biometry = 2,
+}
+
+impl UvPolicy {
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::None),
+            1 => Some(Self::Presence),
+            2 => Some(Self::Biometry),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Presence => "presence",
+            Self::Biometry => "biometry",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "none" => Some(Self::None),
+            "presence" => Some(Self::Presence),
+            "biometry" => Some(Self::Biometry),
+            _ => None,
+        }
+    }
+
+    /// Whether this policy can produce a UV bit after a successful use.
+    pub fn supports_uv(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
 /// A stored credential. Every credential the authenticator creates is kept
 /// in the store; `discoverable` marks resident ("rk") credentials.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +72,8 @@ pub struct Credential {
     pub discoverable: bool,
     /// Creation order, larger is newer.
     pub created: u64,
+    /// UV policy bound into the SE key (or recorded for the soft backend).
+    pub uv_policy: UvPolicy,
 }
 
 pub const CREDENTIAL_ID_LEN: usize = 32;
@@ -52,7 +104,12 @@ impl fmt::Display for BackendError {
 /// Creates and uses P-256 private keys; also the source of randomness.
 pub trait Backend {
     fn random(&mut self, out: &mut [u8]);
-    fn create_key(&mut self, rp_id: &str, user_id: &[u8]) -> Result<NewKey, BackendError>;
+    fn create_key(
+        &mut self,
+        rp_id: &str,
+        user_id: &[u8],
+        uv: UvPolicy,
+    ) -> Result<NewKey, BackendError>;
     /// ECDSA P-256 SHA-256 over `message` (the backend hashes), DER encoded.
     fn sign(&mut self, handle: &[u8], message: &[u8]) -> Result<Vec<u8>, BackendError>;
     fn delete_key(&mut self, handle: &[u8]) -> Result<(), BackendError>;
