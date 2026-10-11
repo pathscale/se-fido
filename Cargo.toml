@@ -7,29 +7,25 @@ members = [
     "crates/backend-se",
     "crates/transport-test",
     "crates/transport-mac",
+    "crates/fixtures",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 rust-version = "1.80"
 publish = false
 
 [workspace.dependencies]
-ciborium = "0.2"
-p256 = { version = "0.13", features = ["ecdsa", "ecdh"] }
-sha2 = "0.10"
-hmac = "0.12"
-hkdf = "0.12"
-aes-gcm = "0.10"
-rand = "0.8"
-thiserror = "2"
-core-foundation = "0.10"
-core-foundation-sys = "0.8"
-tempfile = "3"
+p256 = { version = "^0.13", default-features = false }
+sha2 = { version = "^0.10", default-features = false }
+hkdf = { version = "^0.12", default-features = false }
+aes-gcm = { version = "^0.10", default-features = false }
 
-ctaphid = { path = "crates/ctaphid" }
-ctap2 = { path = "crates/ctap2" }
+ctaphid = { path = "crates/ctaphid", default-features = false }
+ctap2 = { path = "crates/ctap2", default-features = false }
 se-fido-store = { path = "crates/store" }
 backend-se = { path = "crates/backend-se" }
+transport-test = { path = "crates/transport-test" }
+transport-mac = { path = "crates/transport-mac" }
