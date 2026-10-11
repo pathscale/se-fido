@@ -11,8 +11,8 @@ use crate::ffi::*;
 use crate::{properties, DeviceIdentity, PropValue, DEFAULT_IDENTITY, REPORT_SIZE};
 use backend_se::{storage_key, AccessPolicy, SeBackend, StorageMode, SystemEntropy};
 use ctap2::{
-    Authenticator, AuthenticatorConfig, Bytes, Presence, PresenceError, PresenceRequest,
-    UserPresence,
+    AttestationFormat, Authenticator, AuthenticatorConfig, Bytes, Presence, PresenceError,
+    PresenceKind, PresenceRequest, UserPresence, UvPolicy,
 };
 use ctaphid::{keepalive_packet, Action, Command, Config, KeepaliveStatus, Packet, Server};
 use se_fido_store::{default_dir, FileStore};
@@ -23,16 +23,99 @@ use std::time::Instant;
 
 const KEEPALIVE_MS: u64 = 100;
 
-type Auth = Authenticator<SeBackend, FileStore<SystemEntropy>, ImmediatePresence>;
+type Auth = Authenticator<SeBackend, FileStore<SystemEntropy>, DevicePresence>;
 
-/// Presence that approves immediately. Touch ID is M5. Keepalives are sent by
-/// the device while a request is pending on the dispatch queue.
-struct ImmediatePresence;
+/// Runtime options for the virtual device (CLI flags / env).
+#[derive(Debug, Clone)]
+pub struct DeviceOptions {
+    /// Default UV policy for new credentials.
+    pub uv_policy: UvPolicy,
+    /// Attestation format (affects whether MakeCredential will SE-prompt).
+    pub attestation: AttestationFormat,
+    /// DANGEROUS: skip LA/SE prompts and approve presence. Opt-in only.
+    pub auto_approve: bool,
+}
 
-impl UserPresence for ImmediatePresence {
+impl Default for DeviceOptions {
+    fn default() -> Self {
+        DeviceOptions {
+            uv_policy: UvPolicy::Presence,
+            attestation: AttestationFormat::PackedSelf,
+            auto_approve: false,
+        }
+    }
+}
+
+/// Device-side presence: LocalAuthentication for UP when the SE will not
+/// prompt; otherwise SE access control on the next sign enforces UV/UP.
+struct DevicePresence {
+    opts: DeviceOptions,
+}
+
+impl DevicePresence {
+    fn reason(req: &PresenceRequest) -> String {
+        let rp = req
+            .rp_id
+            .as_ref()
+            .map(|t| t.as_str())
+            .unwrap_or("this site");
+        match req.kind {
+            PresenceKind::MakeCredential => format!("Create a passkey for {rp}"),
+            PresenceKind::GetAssertion => format!("Sign in to {rp}"),
+            PresenceKind::Excluded => format!("Confirm a passkey already exists for {rp}"),
+            PresenceKind::Reset => "Reset se-fido and delete all passkeys".into(),
+            PresenceKind::Selection => format!("Select se-fido for {rp}"),
+            PresenceKind::Probe => format!("Use se-fido with {rp}"),
+        }
+    }
+
+    /// True when the next private-key use will trigger an SE ACL prompt.
+    fn se_will_prompt(&self, kind: PresenceKind) -> bool {
+        if !self.opts.uv_policy.supports_uv() {
+            return false;
+        }
+        match kind {
+            PresenceKind::GetAssertion => true,
+            PresenceKind::MakeCredential => {
+                !matches!(self.opts.attestation, AttestationFormat::None)
+            }
+            _ => false,
+        }
+    }
+}
+
+impl UserPresence for DevicePresence {
     fn request(&mut self, req: &PresenceRequest) -> Result<Presence, PresenceError> {
-        Ok(Presence {
-            user_verified: req.require_uv,
+        if self.opts.auto_approve {
+            eprintln!(
+                "se-fido: WARNING --auto-approve is ON; accepting {:?} without LA/Touch ID",
+                req.kind
+            );
+            return Ok(Presence {
+                user_verified: req.require_uv && self.opts.uv_policy.supports_uv(),
+            });
+        }
+        if self.se_will_prompt(req.kind) {
+            // SE key ACL prompts on SecKeyCreateSignature; claim UV intent.
+            // Cancel/deny from the SE maps to BackendError::Cancelled.
+            return Ok(Presence {
+                user_verified: self.opts.uv_policy.supports_uv(),
+            });
+        }
+        // Explicit UP: LA with passcode allowed (UvPolicy::None non-biometric path).
+        let biometry_only = matches!(self.opts.uv_policy, UvPolicy::Biometry)
+            && matches!(
+                req.kind,
+                PresenceKind::MakeCredential | PresenceKind::GetAssertion
+            );
+        crate::la::evaluate(
+            &Self::reason(req),
+            biometry_only,
+            std::time::Duration::from_secs(60),
+        )
+        .map(|p| Presence {
+            // UV bit only when policy supports it and LA reported biometry.
+            user_verified: self.opts.uv_policy.supports_uv() && p.user_verified,
         })
     }
 }
@@ -234,14 +317,24 @@ fn build_properties_dict(id: &DeviceIdentity) -> Cf {
     dict
 }
 
-fn open_authenticator(dir: PathBuf) -> Result<Auth, String> {
+fn open_authenticator(dir: PathBuf, opts: &DeviceOptions) -> Result<Auth, String> {
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let key = storage_key(&dir).map_err(|e| e.to_string())?;
     let store =
         FileStore::open(dir.join("store"), &key, SystemEntropy).map_err(|e| e.to_string())?;
+    // Per-key ACL is chosen in create_key from UvPolicy; backend default unused.
     let backend = SeBackend::new(StorageMode::Blob, AccessPolicy::None);
-    let cfg = AuthenticatorConfig::default();
-    Ok(Authenticator::new(backend, store, ImmediatePresence, cfg))
+    let cfg = AuthenticatorConfig {
+        default_uv_policy: opts.uv_policy,
+        attestation: opts.attestation,
+        ..AuthenticatorConfig::default()
+    };
+    Ok(Authenticator::new(
+        backend,
+        store,
+        DevicePresence { opts: opts.clone() },
+        cfg,
+    ))
 }
 
 /// Data directory: `$SE_FIDO_DIR` or the store default.
@@ -253,9 +346,14 @@ pub fn data_dir() -> Result<PathBuf, String> {
 }
 
 /// Human-readable plan of what `--run` would do. Does not create a device.
-pub fn dry_run_text() -> String {
+pub fn dry_run_text(opts: &DeviceOptions) -> String {
     let id = &DEFAULT_IDENTITY;
     let dir = data_dir().unwrap_or_else(|e| PathBuf::from(format!("<error: {e}>")));
+    let auto = if opts.auto_approve {
+        "ON (DANGEROUS: no LA/Touch ID)"
+    } else {
+        "off (LA for UP when SE will not prompt; SE ACL on sign for presence/biometry)"
+    };
     format!(
         "se-fido-device dry run (pass --run to create and activate the virtual HID device)\n\
          \n\
@@ -273,9 +371,12 @@ pub fn dry_run_text() -> String {
          data dir: {}\n\
          entitlement: com.apple.developer.hid.virtual.device\n\
          options: IOHIDUserDeviceOptionsCreateOnActivate\n\
-         presence: auto-approve (Touch ID is M5)\n\
+         uv_policy: {} (default for new credentials)\n\
+         attestation: {:?}\n\
+         auto_approve: {}\n\
          \n\
-         See DEPLOY.md for signing and SIP/AMFI steps before --run.\n",
+         See DEPLOY.md for signing and SIP/AMFI steps before --run.\n\
+         After deploy, probe Touch ID SE keys with: target/debug/se-probe --touchid\n",
         id.product,
         id.manufacturer,
         id.serial,
@@ -286,6 +387,9 @@ pub fn dry_run_text() -> String {
         crate::FIDO_USAGE_CTAPHID,
         crate::REPORT_DESCRIPTOR.len(),
         dir.display(),
+        opts.uv_policy.as_str(),
+        opts.attestation,
+        auto,
     )
 }
 
@@ -298,9 +402,12 @@ pub fn dry_run_text() -> String {
 /// # Safety
 /// Calls into IOKit and libdispatch. Only invoke from a process that holds the
 /// entitlement and that the user has explicitly started with `--run`.
-pub unsafe fn run() -> Result<(), String> {
+pub unsafe fn run(opts: &DeviceOptions) -> Result<(), String> {
+    if opts.auto_approve {
+        eprintln!("se-fido: WARNING starting with --auto-approve; presence is not verified");
+    }
     let dir = data_dir()?;
-    let auth = open_authenticator(dir)?;
+    let auth = open_authenticator(dir, opts)?;
     let dict = build_properties_dict(&DEFAULT_IDENTITY);
 
     let label = CString::new("com.se-fido.device").unwrap();
