@@ -1,0 +1,14 @@
+[package]
+name = "transport-test"
+description = "In-memory CTAPHID host and relying-party verifier for end-to-end checks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ctaphid = { workspace = true, features = ["std"] }
+ctap2 = { workspace = true, features = ["std"] }
+p256 = { workspace = true, features = ["ecdsa"] }
+sha2.workspace = true
