@@ -29,6 +29,7 @@ pub mod entropy;
 pub mod soft;
 mod status;
 mod types;
+pub mod u2f;
 
 pub use authenticator::{
     AttestationFormat, Authenticator, AuthenticatorConfig, NEXT_ASSERTION_TIMEOUT_MS,

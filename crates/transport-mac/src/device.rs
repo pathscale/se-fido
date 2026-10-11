@@ -199,7 +199,10 @@ impl Inner {
             return;
         };
         self.send_keepalive(cid, KeepaliveStatus::UpNeeded);
-        let resp = self.auth.process(&payload, self.now_ms());
+        let resp = match cmd {
+            Command::Msg => ctap2::u2f::process(payload.as_slice()),
+            _ => self.auth.process(&payload, self.now_ms()),
+        };
         match self.server.response(cid, cmd, &resp) {
             Ok(p) => self.send_packets(&p),
             Err(e) => eprintln!("se-fido: fragment response: {e}"),

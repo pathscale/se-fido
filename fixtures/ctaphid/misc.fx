@@ -1,8 +1,9 @@
 # Unknown and host-forbidden commands, WINK, LOCK, report size
 init ffffffff 0102030405060708
 raw 00000001d50000 expect=error:InvalidCmd
-# MSG (CTAP1) is not implemented: NMSG capability
-raw 0000000183000100 expect=error:InvalidCmd
+# MSG (CTAP1) surfaces to the application (U2F); framing accepts it
+send 00000001 MSG 1 expect=process
+abort 00000001
 raw 00000001bb000101 expect=error:InvalidCmd
 raw 00000001bf000101 expect=error:InvalidCmd
 send 00000001 WINK 0 expect=wink

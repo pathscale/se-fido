@@ -443,6 +443,16 @@ fn step(
         "reset" => vec![0x07],
         "selection" => vec![0x0b],
         "clientpin" => vec![0x06, 0xa0],
+        "u2f" => {
+            let apdu = unhex(a.words.first().copied().unwrap_or("00030000000000"))?;
+            let resp = ctap2::u2f::process(&apdu);
+            writeln!(out, "  u2f {}", ctap2::hex(&resp)).ok();
+            let want = a.get("want").unwrap_or("5532465f56329000"); // U2F_V2 + 9000
+            if ctap2::hex(&resp) != want {
+                return Err(format!("u2f: wanted {want}, got {}", ctap2::hex(&resp)));
+            }
+            return Ok(());
+        }
         "raw" => unhex(a.words.first().copied().unwrap_or(""))?,
         "make" => make_request(st, a, &cdh)?,
         "get" => get_request(st, a, &cdh)?,

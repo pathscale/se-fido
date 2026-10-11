@@ -133,7 +133,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             device_version: (0, 1, 0),
-            capabilities: CAPABILITY_WINK | CAPABILITY_CBOR | CAPABILITY_NMSG,
+            capabilities: CAPABILITY_WINK | CAPABILITY_CBOR,
             continuation_timeout_ms: 1000,
             max_channels: 64,
         }
