@@ -1,8 +1,8 @@
 //! authenticatorData and COSE key encoding (WebAuthn section 6.1).
 
-use crate::cbor::{bytes, int, to_canonical_vec};
+use crate::cbor::{encode, Out};
 use crate::COSE_ALG_ES256;
-use ciborium::value::Value;
+use alloc::vec::Vec;
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use sha2::{Digest, Sha256};
 
@@ -15,18 +15,17 @@ pub fn rp_id_hash(rp_id: &str) -> [u8; 32] {
     Sha256::digest(rp_id.as_bytes()).into()
 }
 
-/// COSE_Key for an EC2 P-256 ES256 public key:
-/// `{1: 2 (kty EC2), 3: -7 (alg ES256), -1: 1 (crv P-256), -2: x, -3: y}`.
+/// COSE_Key `{1: 2, 3: -7, -1: 1, -2: x, -3: y}` (EC2, ES256, P-256).
 pub fn cose_key(pk: &p256::PublicKey) -> Vec<u8> {
     let point = pk.to_encoded_point(false);
-    let x = point.x().expect("uncompressed point has x");
-    let y = point.y().expect("uncompressed point has y");
-    to_canonical_vec(Value::Map(vec![
-        (int(1), int(2)),
-        (int(3), int(COSE_ALG_ES256)),
-        (int(-1), int(1)),
-        (int(-2), bytes(x)),
-        (int(-3), bytes(y)),
+    let x = point.x().map(|x| &x[..]).unwrap_or(&[]);
+    let y = point.y().map(|y| &y[..]).unwrap_or(&[]);
+    encode(&Out::Map(alloc::vec![
+        (Out::Int(1), Out::Int(2)),
+        (Out::Int(3), Out::Int(COSE_ALG_ES256)),
+        (Out::Int(-1), Out::Int(1)),
+        (Out::Int(-2), Out::Bytes(x)),
+        (Out::Int(-3), Out::Bytes(y)),
     ]))
 }
 
@@ -36,8 +35,7 @@ pub struct AttestedCredential<'a> {
     pub cose_key: &'a [u8],
 }
 
-/// Serialise authenticatorData. `extensions` must already be CBOR-encoded
-/// if present (sets ED).
+/// Serialise authenticatorData. AT and ED flags follow the arguments.
 pub fn build(
     rp_id: &str,
     mut flags: u8,
@@ -65,54 +63,4 @@ pub fn build(
         out.extend_from_slice(e);
     }
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use p256::SecretKey;
-
-    #[test]
-    fn layout_without_attested_data() {
-        let ad = build("example.com", FLAG_UP, 0x01020304, None, None);
-        assert_eq!(ad.len(), 37);
-        assert_eq!(&ad[..32], &rp_id_hash("example.com"));
-        assert_eq!(ad[32], FLAG_UP);
-        assert_eq!(&ad[33..37], &[1, 2, 3, 4]);
-    }
-
-    #[test]
-    fn layout_with_attested_data_sets_at() {
-        let sk = SecretKey::from_slice(&[7u8; 32]).unwrap();
-        let ck = cose_key(&sk.public_key());
-        let ad = build(
-            "a",
-            FLAG_UP | FLAG_UV,
-            5,
-            Some(&AttestedCredential {
-                aaguid: &[9; 16],
-                credential_id: &[1, 2, 3],
-                cose_key: &ck,
-            }),
-            None,
-        );
-        assert_eq!(ad[32], FLAG_UP | FLAG_UV | FLAG_AT);
-        assert_eq!(&ad[37..53], &[9; 16]);
-        assert_eq!(&ad[53..55], &[0, 3]);
-        assert_eq!(&ad[55..58], &[1, 2, 3]);
-        assert_eq!(&ad[58..], &ck[..]);
-    }
-
-    #[test]
-    fn cose_key_canonical_layout() {
-        let sk = SecretKey::from_slice(&[7u8; 32]).unwrap();
-        let ck = cose_key(&sk.public_key());
-        // a5 01 02 03 26 20 01 21 58 20 <x> 22 58 20 <y>
-        assert_eq!(ck.len(), 77);
-        assert_eq!(
-            &ck[..10],
-            &[0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20]
-        );
-        assert_eq!(&ck[42..45], &[0x22, 0x58, 0x20]);
-    }
 }

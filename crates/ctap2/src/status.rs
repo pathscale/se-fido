@@ -1,4 +1,4 @@
-/// CTAP status codes (CTAP 2.1, section 8.2 "Status codes").
+/// CTAP status codes (CTAP 2.1 section 8.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Status {
@@ -29,7 +29,38 @@ pub enum Status {
 }
 
 impl Status {
+    pub const ALL: [Status; 24] = [
+        Status::Ok,
+        Status::InvalidCommand,
+        Status::InvalidParameter,
+        Status::InvalidLength,
+        Status::CborUnexpectedType,
+        Status::InvalidCbor,
+        Status::MissingParameter,
+        Status::LimitExceeded,
+        Status::CredentialExcluded,
+        Status::Processing,
+        Status::InvalidCredential,
+        Status::UnsupportedAlgorithm,
+        Status::OperationDenied,
+        Status::KeyStoreFull,
+        Status::UnsupportedOption,
+        Status::InvalidOption,
+        Status::KeepaliveCancel,
+        Status::NoCredentials,
+        Status::UserActionTimeout,
+        Status::NotAllowed,
+        Status::PinNotSet,
+        Status::RequestTooLarge,
+        Status::UpRequired,
+        Status::Other,
+    ];
+
     pub fn code(self) -> u8 {
         self as u8
+    }
+
+    pub fn from_code(c: u8) -> Option<Status> {
+        Status::ALL.into_iter().find(|s| s.code() == c)
     }
 }

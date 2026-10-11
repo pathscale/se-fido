@@ -1,24 +1,21 @@
 use crate::authdata::{self, AttestedCredential, FLAG_UP, FLAG_UV};
-use crate::cbor::{
-    as_array, as_bool, as_bytes, as_int, as_text, bytes, decode, int, text, to_canonical_vec,
-    MapView,
-};
+use crate::bytes::{Bytes, Text};
+use crate::cbor::{decode, encode, Out, Value};
+use crate::der;
 use crate::types::*;
 use crate::{command, Status, AAGUID, COSE_ALG_ES256};
-use ciborium::value::Value;
+use alloc::sync::Arc;
+use alloc::vec;
+use alloc::vec::Vec;
 use p256::ecdsa::signature::Verifier;
-use p256::ecdsa::{Signature, VerifyingKey};
-use rand::rngs::OsRng;
-use rand::RngCore;
-use std::time::{Duration, Instant};
+use p256::ecdsa::VerifyingKey;
+use p256::elliptic_curve::sec1::ToEncodedPoint;
 
-/// Attestation statement format returned by authenticatorMakeCredential.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttestationFormat {
-    /// "packed" self attestation: signed with the credential's own key, no
-    /// certificate chain (WebAuthn section 8.2, self attestation).
+    /// "packed" self attestation: signed by the credential key, no x5c.
     PackedSelf,
-    /// "none": empty attestation statement.
+    /// "none": empty statement.
     None,
 }
 
@@ -26,11 +23,9 @@ pub enum AttestationFormat {
 pub struct AuthenticatorConfig {
     pub aaguid: [u8; 16],
     pub attestation: AttestationFormat,
-    /// Advertise and perform built-in user verification (Touch ID). When
-    /// true, GetInfo reports `options.uv = true` and requests with
-    /// `options.uv = true` require [`Presence::user_verified`].
+    /// Advertise and perform built-in user verification (Touch ID).
     pub builtin_uv: bool,
-    /// Value reported as maxMsgSize in GetInfo (CTAPHID maximum by default).
+    /// maxMsgSize in GetInfo (CTAPHID maximum by default).
     pub max_msg_size: u32,
 }
 
@@ -45,19 +40,19 @@ impl Default for AuthenticatorConfig {
     }
 }
 
-/// Spec: authenticatorGetNextAssertion state expires after 30 seconds.
-const NEXT_ASSERTION_TIMEOUT: Duration = Duration::from_secs(30);
+/// GetNextAssertion state lifetime (spec: 30 s).
+pub const NEXT_ASSERTION_TIMEOUT_MS: u64 = 30_000;
 const MAX_USER_ID_LEN: usize = 64;
-/// Names longer than this are truncated (spec permits truncation to 64 bytes).
+/// Names are truncated to this many bytes (allowed by the spec).
 const MAX_NAME_LEN: usize = 64;
 
-struct PendingAssertions {
-    rp_id: String,
-    client_data_hash: Vec<u8>,
+struct Pending {
+    rp_id: Text,
+    client_data_hash: Bytes,
     flags: u8,
     user_verified: bool,
-    remaining: Vec<Credential>,
-    started: Instant,
+    remaining: Vec<Arc<Credential>>,
+    started_ms: u64,
 }
 
 /// The CTAP2 authenticator state machine.
@@ -66,7 +61,7 @@ pub struct Authenticator<B, S, P> {
     store: S,
     presence: P,
     config: AuthenticatorConfig,
-    pending: Option<PendingAssertions>,
+    pending: Option<Pending>,
 }
 
 #[derive(Default)]
@@ -79,61 +74,49 @@ struct Options {
 fn parse_options(v: Option<&Value>) -> Result<Options, Status> {
     let mut o = Options::default();
     let Some(v) = v else { return Ok(o) };
-    let m = MapView::from_value(v)?;
-    for (k, val) in m.0 {
+    for (k, val) in v.as_map()? {
         let Value::Text(k) = k else { continue };
         match k.as_str() {
-            "rk" => o.rk = Some(as_bool(val)?),
-            "up" => o.up = Some(as_bool(val)?),
-            "uv" => o.uv = Some(as_bool(val)?),
-            _ => {} // unknown options are ignored
+            "rk" => o.rk = Some(val.as_bool()?),
+            "up" => o.up = Some(val.as_bool()?),
+            "uv" => o.uv = Some(val.as_bool()?),
+            _ => {}
         }
     }
     Ok(o)
 }
 
-/// Parse a list of PublicKeyCredentialDescriptors, keeping IDs of type
-/// "public-key" and ignoring other types.
-fn parse_descriptors(v: &Value) -> Result<Vec<Vec<u8>>, Status> {
+/// IDs of "public-key" descriptors; other types are skipped.
+fn parse_descriptors(v: &Value) -> Result<Vec<Bytes>, Status> {
     let mut ids = Vec::new();
-    for d in as_array(v)? {
-        let dm = MapView::from_value(d)?;
-        let ty = as_text(dm.get_text_key("type").ok_or(Status::MissingParameter)?)?;
-        let id = as_bytes(dm.get_text_key("id").ok_or(Status::MissingParameter)?)?;
-        if ty == "public-key" {
-            ids.push(id.to_vec());
+    for d in v.as_array()? {
+        d.as_map()?;
+        let ty = d
+            .get_text("type")
+            .ok_or(Status::MissingParameter)?
+            .as_text()?;
+        let id = d
+            .get_text("id")
+            .ok_or(Status::MissingParameter)?
+            .as_bytes()?;
+        if ty.as_str() == "public-key" {
+            ids.push(id.clone());
         }
     }
     Ok(ids)
 }
 
-fn optional_text(m: &MapView<'_>, key: &str) -> Result<Option<String>, Status> {
-    match m.get_text_key(key) {
+fn optional_text(m: &Value, key: &str) -> Result<Option<Text>, Status> {
+    match m.get_text(key) {
         None => Ok(None),
-        Some(v) => Ok(Some(truncate(as_text(v)?))),
+        Some(v) => Ok(Some(v.as_text()?.truncated(MAX_NAME_LEN))),
     }
 }
 
-fn truncate(s: &str) -> String {
-    if s.len() <= MAX_NAME_LEN {
-        return s.to_owned();
-    }
-    let mut end = MAX_NAME_LEN;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    s[..end].to_owned()
-}
-
-fn parse_params(params: &[u8]) -> Result<Value, Status> {
-    if params.is_empty() {
-        return Err(Status::MissingParameter);
-    }
-    let v = decode(params)?;
-    match v {
-        Value::Map(_) => Ok(v),
-        _ => Err(Status::CborUnexpectedType),
-    }
+fn required_map(v: Option<&Value>) -> Result<&Value, Status> {
+    let v = v.ok_or(Status::MissingParameter)?;
+    v.as_map()?;
+    Ok(v)
 }
 
 fn store_err(e: StoreError) -> Status {
@@ -165,14 +148,8 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
     pub fn backend(&self) -> &B {
         &self.backend
     }
-    pub fn backend_mut(&mut self) -> &mut B {
-        &mut self.backend
-    }
     pub fn store(&self) -> &S {
         &self.store
-    }
-    pub fn store_mut(&mut self) -> &mut S {
-        &mut self.store
     }
     pub fn presence(&self) -> &P {
         &self.presence
@@ -184,75 +161,77 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
         &self.config
     }
 
-    /// Handle one CTAP2 request (command byte followed by CBOR parameters)
-    /// and return the response (status byte followed by optional CBOR).
-    pub fn process(&mut self, request: &[u8]) -> Vec<u8> {
-        match self.dispatch(request) {
-            Ok(Some(v)) => {
-                let mut out = vec![Status::Ok.code()];
-                out.extend(to_canonical_vec(v));
+    /// Handle one request (command byte + CBOR); returns status + CBOR.
+    pub fn process(&mut self, request: &Bytes, now_ms: u64) -> Vec<u8> {
+        match self.dispatch(request, now_ms) {
+            Ok(body) => {
+                let mut out = Vec::with_capacity(1 + body.len());
+                out.push(Status::Ok.code());
+                out.extend_from_slice(&body);
                 out
             }
-            Ok(None) => vec![Status::Ok.code()],
             Err(s) => vec![s.code()],
         }
     }
 
-    fn dispatch(&mut self, request: &[u8]) -> Result<Option<Value>, Status> {
-        let (&cmd, params) = request.split_first().ok_or(Status::InvalidLength)?;
+    fn dispatch(&mut self, request: &Bytes, now_ms: u64) -> Result<Vec<u8>, Status> {
+        let &cmd = request.first().ok_or(Status::InvalidLength)?;
+        let params = request
+            .slice(1..request.len())
+            .ok_or(Status::InvalidLength)?;
         if cmd != command::GET_NEXT_ASSERTION {
             self.pending = None;
         }
         match cmd {
-            command::GET_INFO => Ok(Some(self.get_info())),
-            command::MAKE_CREDENTIAL => self.make_credential(&parse_params(params)?).map(Some),
-            command::GET_ASSERTION => self.get_assertion(&parse_params(params)?).map(Some),
-            command::GET_NEXT_ASSERTION => self.get_next_assertion().map(Some),
-            command::RESET => self.reset().map(|_| None),
+            command::GET_INFO => Ok(self.get_info()),
+            command::MAKE_CREDENTIAL => self.make_credential(&parse_params(&params)?),
+            command::GET_ASSERTION => self.get_assertion(&parse_params(&params)?, now_ms),
+            command::GET_NEXT_ASSERTION => self.get_next_assertion(now_ms),
+            command::RESET => self.reset().map(|_| Vec::new()),
             command::SELECTION => self
                 .ask(PresenceKind::Selection, None, None, false)
-                .map(|_| None),
-            // clientPin is not implemented (see README); fall through.
+                .map(|_| Vec::new()),
+            // clientPin and anything else: not implemented.
             _ => Err(Status::InvalidCommand),
         }
     }
 
-    fn get_info(&self) -> Value {
+    fn get_info(&self) -> Vec<u8> {
         let mut options = vec![
-            (text("rk"), Value::Bool(true)),
-            (text("up"), Value::Bool(true)),
-            (text("plat"), Value::Bool(false)),
+            (Out::Text("rk"), Out::Bool(true)),
+            (Out::Text("up"), Out::Bool(true)),
+            (Out::Text("plat"), Out::Bool(false)),
         ];
         if self.config.builtin_uv {
-            options.push((text("uv"), Value::Bool(true)));
+            options.push((Out::Text("uv"), Out::Bool(true)));
         }
-        Value::Map(vec![
-            (int(0x01), Value::Array(vec![text("FIDO_2_0")])),
-            (int(0x03), bytes(&self.config.aaguid)),
-            (int(0x04), Value::Map(options)),
-            (int(0x05), int(self.config.max_msg_size as i64)),
-            (int(0x09), Value::Array(vec![text("usb")])),
+        encode(&Out::Map(vec![
+            (Out::Int(0x01), Out::Array(vec![Out::Text("FIDO_2_0")])),
+            (Out::Int(0x03), Out::Bytes(&self.config.aaguid)),
+            (Out::Int(0x04), Out::Map(options)),
+            (Out::Int(0x05), Out::Int(self.config.max_msg_size as i64)),
+            (Out::Int(0x09), Out::Array(vec![Out::Text("usb")])),
             (
-                int(0x0a),
-                Value::Array(vec![Value::Map(vec![
-                    (text("alg"), int(COSE_ALG_ES256)),
-                    (text("type"), text("public-key")),
+                Out::Int(0x0a),
+                Out::Array(vec![Out::Map(vec![
+                    (Out::Text("alg"), Out::Int(COSE_ALG_ES256)),
+                    (Out::Text("type"), Out::Text("public-key")),
                 ])]),
             ),
-        ])
+        ]))
     }
 
     fn ask(
         &mut self,
         kind: PresenceKind,
-        rp_id: Option<&str>,
-        user_name: Option<&str>,
+        rp_id: Option<&Text>,
+        user_name: Option<&Text>,
         require_uv: bool,
     ) -> Result<Presence, Status> {
         let req = PresenceRequest {
             kind,
-            rp_id: rp_id.map(str::to_owned),
-            user_name: user_name.map(str::to_owned),
+            rp_id: rp_id.cloned(),
+            user_name: user_name.cloned(),
             require_uv,
         };
         let p = self.presence.request(&req).map_err(|e| match e {
@@ -266,84 +245,97 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
         Ok(p)
     }
 
-    /// Handle pinUvAuthParam / pinUvAuthProtocol. No PIN/UV auth protocol is
-    /// implemented, so a zero-length parameter (the platform's "touch to
-    /// select this authenticator" probe) collects presence and answers
-    /// PIN_NOT_SET, and any other value is rejected.
+    /// No PIN/UV auth protocol is implemented. A zero-length pinUvAuthParam
+    /// (platform "touch to select" probe) collects presence then answers
+    /// PIN_NOT_SET; any other value is rejected.
     fn pin_uv_auth(
         &mut self,
-        m: &MapView<'_>,
+        m: &Value,
         param_key: i64,
         proto_key: i64,
-        rp_id: Option<&str>,
+        rp_id: &Text,
     ) -> Result<(), Status> {
-        let Some(p) = m.get_int_key(param_key) else {
+        let Some(p) = m.get(param_key) else {
             return Ok(());
         };
-        let p = as_bytes(p)?;
-        if p.is_empty() {
-            self.ask(PresenceKind::Probe, rp_id, None, false)?;
+        if p.as_bytes()?.is_empty() {
+            self.ask(PresenceKind::Probe, Some(rp_id), None, false)?;
             return Err(Status::PinNotSet);
         }
-        if m.get_int_key(proto_key).is_none() {
+        if m.get(proto_key).is_none() {
             return Err(Status::MissingParameter);
         }
         Err(Status::InvalidParameter)
     }
 
+    /// Sign and verify against the stored public key before releasing.
     fn sign_checked(&mut self, cred: &Credential, msg: &[u8]) -> Result<Vec<u8>, Status> {
         let sig = self
             .backend
             .sign(&cred.key_handle, msg)
             .map_err(backend_err)?;
-        // Defence in depth: never emit a signature that does not verify
-        // against the public key we gave the relying party.
         let vk = VerifyingKey::from_sec1_bytes(&cred.public_key).map_err(|_| Status::Other)?;
-        let parsed = Signature::from_der(&sig).map_err(|_| Status::Other)?;
+        let parsed = der::decode(&sig).ok_or(Status::Other)?;
         vk.verify(msg, &parsed).map_err(|_| Status::Other)?;
         Ok(sig)
     }
 
-    fn make_credential(&mut self, params: &Value) -> Result<Value, Status> {
-        let m = MapView::from_value(params)?;
-        let client_data_hash =
-            as_bytes(m.get_int_key(0x01).ok_or(Status::MissingParameter)?)?.to_vec();
-        let rp = MapView::from_value(m.get_int_key(0x02).ok_or(Status::MissingParameter)?)?;
-        let rp_id = as_text(rp.get_text_key("id").ok_or(Status::MissingParameter)?)?.to_owned();
-        let rp_name = optional_text(&rp, "name")?;
-        let user = MapView::from_value(m.get_int_key(0x03).ok_or(Status::MissingParameter)?)?;
-        let user_id = as_bytes(user.get_text_key("id").ok_or(Status::MissingParameter)?)?.to_vec();
-        let user_name = optional_text(&user, "name")?;
-        let user_display_name = optional_text(&user, "displayName")?;
-        let cred_params = as_array(m.get_int_key(0x04).ok_or(Status::MissingParameter)?)?;
+    fn make_credential(&mut self, m: &Value) -> Result<Vec<u8>, Status> {
+        let client_data_hash = m
+            .get(0x01)
+            .ok_or(Status::MissingParameter)?
+            .as_bytes()?
+            .clone();
+        let rp = required_map(m.get(0x02))?;
+        let rp_id = rp
+            .get_text("id")
+            .ok_or(Status::MissingParameter)?
+            .as_text()?
+            .clone();
+        let rp_name = optional_text(rp, "name")?;
+        let user = required_map(m.get(0x03))?;
+        let user_id = user
+            .get_text("id")
+            .ok_or(Status::MissingParameter)?
+            .as_bytes()?
+            .clone();
+        let user_name = optional_text(user, "name")?;
+        let user_display_name = optional_text(user, "displayName")?;
+        let cred_params = m.get(0x04).ok_or(Status::MissingParameter)?.as_array()?;
 
-        self.pin_uv_auth(&m, 0x08, 0x09, Some(&rp_id))?;
+        self.pin_uv_auth(m, 0x08, 0x09, &rp_id)?;
 
         if user_id.len() > MAX_USER_ID_LEN {
             return Err(Status::InvalidLength);
         }
         let mut es256 = false;
         for p in cred_params {
-            let pm = MapView::from_value(p)?;
-            let ty = as_text(pm.get_text_key("type").ok_or(Status::MissingParameter)?)?;
-            let alg = as_int(pm.get_text_key("alg").ok_or(Status::MissingParameter)?)?;
-            if ty == "public-key" && alg == COSE_ALG_ES256 as i128 {
+            p.as_map()?;
+            let ty = p
+                .get_text("type")
+                .ok_or(Status::MissingParameter)?
+                .as_text()?;
+            let alg = p
+                .get_text("alg")
+                .ok_or(Status::MissingParameter)?
+                .as_int()?;
+            if ty.as_str() == "public-key" && alg == COSE_ALG_ES256 as i128 {
                 es256 = true;
             }
         }
         if !es256 {
             return Err(Status::UnsupportedAlgorithm);
         }
-        let exclude = match m.get_int_key(0x05) {
+        let exclude = match m.get(0x05) {
             Some(v) => parse_descriptors(v)?,
             None => Vec::new(),
         };
-        if let Some(ext) = m.get_int_key(0x06) {
-            MapView::from_value(ext)?; // no extensions supported; must still be a map
+        if let Some(ext) = m.get(0x06) {
+            ext.as_map()?; // no extensions supported, but must be a map
         }
-        let opts = parse_options(m.get_int_key(0x07))?;
-        if m.get_int_key(0x0a).is_some() {
-            return Err(Status::InvalidParameter); // enterprise attestation unsupported
+        let opts = parse_options(m.get(0x07))?;
+        if m.get(0x0a).is_some() {
+            return Err(Status::InvalidParameter); // enterprise attestation
         }
         if opts.up == Some(false) {
             return Err(Status::InvalidOption);
@@ -373,7 +365,7 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
         let presence = self.ask(
             PresenceKind::MakeCredential,
             Some(&rp_id),
-            user_name.as_deref(),
+            user_name.as_ref(),
             want_uv,
         )?;
         let mut flags = FLAG_UP;
@@ -383,10 +375,10 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
 
         let key = self
             .backend
-            .create_key(&rp_id, &user_id)
+            .create_key(rp_id.as_str(), &user_id)
             .map_err(backend_err)?;
-        let mut cred_id = vec![0u8; CREDENTIAL_ID_LEN];
-        OsRng.fill_bytes(&mut cred_id);
+        let mut cred_id = [0u8; CREDENTIAL_ID_LEN];
+        self.backend.random(&mut cred_id);
         let counter = match self.store.next_sign_count() {
             Ok(c) => c,
             Err(e) => {
@@ -394,25 +386,22 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
                 return Err(store_err(e));
             }
         };
-        let public_key =
-            p256::elliptic_curve::sec1::ToEncodedPoint::to_encoded_point(&key.public_key, false)
-                .as_bytes()
-                .to_vec();
-        let cred = Credential {
-            id: cred_id.clone(),
+        let cred = Arc::new(Credential {
+            id: Bytes::copy_from_slice(&cred_id),
             rp_id: rp_id.clone(),
             rp_name,
             user_id: user_id.clone(),
             user_name,
             user_display_name,
             key_handle: key.handle.clone(),
-            public_key,
+            public_key: Bytes::copy_from_slice(key.public_key.to_encoded_point(false).as_bytes()),
             discoverable: rk,
             created: counter as u64,
-        };
+        });
+
         let cose = authdata::cose_key(&key.public_key);
         let auth_data = authdata::build(
-            &rp_id,
+            rp_id.as_str(),
             flags,
             counter,
             Some(&AttestedCredential {
@@ -422,31 +411,25 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
             }),
             None,
         );
-        let (fmt, att_stmt) = match self.config.attestation {
-            AttestationFormat::None => ("none", Value::Map(vec![])),
+        let sig = match self.config.attestation {
+            AttestationFormat::None => None,
             AttestationFormat::PackedSelf => {
                 let mut msg = auth_data.clone();
                 msg.extend_from_slice(&client_data_hash);
-                let sig = match self.sign_checked(&cred, &msg) {
-                    Ok(sig) => sig,
+                match self.sign_checked(&cred, &msg) {
+                    Ok(sig) => Some(sig),
                     Err(e) => {
                         let _ = self.backend.delete_key(&key.handle);
                         return Err(e);
                     }
-                };
-                (
-                    "packed",
-                    Value::Map(vec![
-                        (text("alg"), int(COSE_ALG_ES256)),
-                        (text("sig"), Value::Bytes(sig)),
-                    ]),
-                )
+                }
             }
         };
-        // Resident credential for the same RP + user replaces the old one.
-        let replaced: Vec<Credential> = if rk {
+
+        // A resident credential for the same RP and user replaces the old one.
+        let replaced: Vec<Arc<Credential>> = if rk {
             self.store
-                .list_rp(&rp_id)
+                .list_rp(rp_id.as_str())
                 .map_err(store_err)?
                 .into_iter()
                 .filter(|c| c.discoverable && c.user_id == user_id)
@@ -454,7 +437,7 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
         } else {
             Vec::new()
         };
-        if let Err(e) = self.store.insert(cred.clone()) {
+        if let Err(e) = self.store.insert(cred) {
             let _ = self.backend.delete_key(&key.handle);
             return Err(store_err(e));
         }
@@ -463,67 +446,87 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
             let _ = self.backend.delete_key(&old.key_handle);
         }
 
-        Ok(Value::Map(vec![
-            (int(0x01), text(fmt)),
-            (int(0x02), Value::Bytes(auth_data)),
-            (int(0x03), att_stmt),
-        ]))
+        let (fmt, att_stmt) = match &sig {
+            None => ("none", Out::Map(Vec::new())),
+            Some(sig) => (
+                "packed",
+                Out::Map(vec![
+                    (Out::Text("alg"), Out::Int(COSE_ALG_ES256)),
+                    (Out::Text("sig"), Out::Bytes(sig)),
+                ]),
+            ),
+        };
+        Ok(encode(&Out::Map(vec![
+            (Out::Int(0x01), Out::Text(fmt)),
+            (Out::Int(0x02), Out::Bytes(&auth_data)),
+            (Out::Int(0x03), att_stmt),
+        ])))
     }
 
-    fn assertion_entries(
+    fn assertion(
         &mut self,
-        rp_id: &str,
+        rp_id: &Text,
         client_data_hash: &[u8],
         flags: u8,
         user_verified: bool,
         cred: &Credential,
-    ) -> Result<Vec<(Value, Value)>, Status> {
+        total: Option<usize>,
+    ) -> Result<Vec<u8>, Status> {
         let counter = self.store.next_sign_count().map_err(store_err)?;
-        let auth_data = authdata::build(rp_id, flags, counter, None, None);
+        let auth_data = authdata::build(rp_id.as_str(), flags, counter, None, None);
         let mut msg = auth_data.clone();
         msg.extend_from_slice(client_data_hash);
         let sig = self.sign_checked(cred, &msg)?;
         let mut entries = vec![
             (
-                int(0x01),
-                Value::Map(vec![
-                    (text("id"), bytes(&cred.id)),
-                    (text("type"), text("public-key")),
+                Out::Int(0x01),
+                Out::Map(vec![
+                    (Out::Text("id"), Out::Bytes(&cred.id)),
+                    (Out::Text("type"), Out::Text("public-key")),
                 ]),
             ),
-            (int(0x02), Value::Bytes(auth_data)),
-            (int(0x03), Value::Bytes(sig)),
+            (Out::Int(0x02), Out::Bytes(&auth_data)),
+            (Out::Int(0x03), Out::Bytes(&sig)),
         ];
         if cred.discoverable {
-            let mut user = vec![(text("id"), bytes(&cred.user_id))];
+            let mut user = vec![(Out::Text("id"), Out::Bytes(&cred.user_id))];
             // Identifying information only after user verification.
             if user_verified {
                 if let Some(n) = &cred.user_name {
-                    user.push((text("name"), text(n)));
+                    user.push((Out::Text("name"), Out::Text(n.as_str())));
                 }
                 if let Some(n) = &cred.user_display_name {
-                    user.push((text("displayName"), text(n)));
+                    user.push((Out::Text("displayName"), Out::Text(n.as_str())));
                 }
             }
-            entries.push((int(0x04), Value::Map(user)));
+            entries.push((Out::Int(0x04), Out::Map(user)));
         }
-        Ok(entries)
+        if let Some(n) = total {
+            entries.push((Out::Int(0x05), Out::Int(n as i64)));
+        }
+        Ok(encode(&Out::Map(entries)))
     }
 
-    fn get_assertion(&mut self, params: &Value) -> Result<Value, Status> {
-        let m = MapView::from_value(params)?;
-        let rp_id = as_text(m.get_int_key(0x01).ok_or(Status::MissingParameter)?)?.to_owned();
-        let client_data_hash =
-            as_bytes(m.get_int_key(0x02).ok_or(Status::MissingParameter)?)?.to_vec();
-        self.pin_uv_auth(&m, 0x06, 0x07, Some(&rp_id))?;
-        let allow = match m.get_int_key(0x03) {
+    fn get_assertion(&mut self, m: &Value, now_ms: u64) -> Result<Vec<u8>, Status> {
+        let rp_id = m
+            .get(0x01)
+            .ok_or(Status::MissingParameter)?
+            .as_text()?
+            .clone();
+        let client_data_hash = m
+            .get(0x02)
+            .ok_or(Status::MissingParameter)?
+            .as_bytes()?
+            .clone();
+        self.pin_uv_auth(m, 0x06, 0x07, &rp_id)?;
+        let allow = match m.get(0x03) {
             Some(v) => parse_descriptors(v)?,
             None => Vec::new(),
         };
-        if let Some(ext) = m.get_int_key(0x04) {
-            MapView::from_value(ext)?;
+        if let Some(ext) = m.get(0x04) {
+            ext.as_map()?;
         }
-        let opts = parse_options(m.get_int_key(0x05))?;
+        let opts = parse_options(m.get(0x05))?;
         if opts.rk.is_some() {
             return Err(Status::UnsupportedOption);
         }
@@ -534,11 +537,11 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
         }
 
         let using_allow_list = !allow.is_empty();
-        let mut creds = Vec::new();
+        let mut creds: Vec<Arc<Credential>> = Vec::new();
         if using_allow_list {
             for id in &allow {
                 if let Some(c) = self.store.get(id).map_err(store_err)? {
-                    if c.rp_id == rp_id && !creds.iter().any(|x: &Credential| x.id == c.id) {
+                    if c.rp_id == rp_id && !creds.iter().any(|x| x.id == c.id) {
                         creds.push(c);
                     }
                 }
@@ -546,19 +549,19 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
         } else {
             creds = self
                 .store
-                .list_rp(&rp_id)
+                .list_rp(rp_id.as_str())
                 .map_err(store_err)?
                 .into_iter()
                 .filter(|c| c.discoverable)
                 .collect();
-            creds.sort_by_key(|c| std::cmp::Reverse(c.created));
+            creds.sort_by_key(|c| core::cmp::Reverse(c.created));
         }
 
         let mut flags = 0u8;
         let mut user_verified = false;
         if want_up || want_uv {
-            // Presence is collected even when nothing matches, so a site
-            // cannot silently probe for credentials.
+            // Presence is collected even if nothing matches, so sites cannot
+            // silently probe for credentials.
             let p = self.ask(PresenceKind::GetAssertion, Some(&rp_id), None, want_uv)?;
             if want_up {
                 flags |= FLAG_UP;
@@ -572,48 +575,68 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
             return Err(Status::NoCredentials);
         }
         let first = creds.remove(0);
-        let mut entries =
-            self.assertion_entries(&rp_id, &client_data_hash, flags, user_verified, &first)?;
-        if !using_allow_list && !creds.is_empty() {
-            entries.push((int(0x05), int(creds.len() as i64 + 1)));
-            self.pending = Some(PendingAssertions {
+        let total = if !using_allow_list && !creds.is_empty() {
+            Some(creds.len() + 1)
+        } else {
+            None
+        };
+        let out = self.assertion(
+            &rp_id,
+            &client_data_hash,
+            flags,
+            user_verified,
+            &first,
+            total,
+        )?;
+        if total.is_some() {
+            self.pending = Some(Pending {
                 rp_id,
                 client_data_hash,
                 flags,
                 user_verified,
                 remaining: creds,
-                started: Instant::now(),
+                started_ms: now_ms,
             });
         }
-        Ok(Value::Map(entries))
+        Ok(out)
     }
 
-    fn get_next_assertion(&mut self) -> Result<Value, Status> {
+    fn get_next_assertion(&mut self, now_ms: u64) -> Result<Vec<u8>, Status> {
         let mut p = self.pending.take().ok_or(Status::NotAllowed)?;
-        if p.started.elapsed() > NEXT_ASSERTION_TIMEOUT || p.remaining.is_empty() {
+        if now_ms.saturating_sub(p.started_ms) > NEXT_ASSERTION_TIMEOUT_MS || p.remaining.is_empty()
+        {
             return Err(Status::NotAllowed);
         }
         let cred = p.remaining.remove(0);
-        let entries = self.assertion_entries(
+        let out = self.assertion(
             &p.rp_id,
             &p.client_data_hash,
             p.flags,
             p.user_verified,
             &cred,
+            None,
         )?;
         if !p.remaining.is_empty() {
-            p.started = Instant::now();
+            p.started_ms = now_ms;
             self.pending = Some(p);
         }
-        Ok(Value::Map(entries))
+        Ok(out)
     }
 
     fn reset(&mut self) -> Result<(), Status> {
         self.ask(PresenceKind::Reset, None, None, false)?;
-        let removed = self.store.clear().map_err(store_err)?;
-        for c in removed {
+        for c in self.store.clear().map_err(store_err)? {
             let _ = self.backend.delete_key(&c.key_handle);
         }
         Ok(())
     }
+}
+
+fn parse_params(params: &Bytes) -> Result<Value, Status> {
+    if params.is_empty() {
+        return Err(Status::MissingParameter);
+    }
+    let v = decode(params)?;
+    v.as_map()?;
+    Ok(v)
 }

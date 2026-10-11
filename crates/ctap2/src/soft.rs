@@ -1,22 +1,29 @@
-//! In-memory implementations of the backend traits, for tests and tooling.
-//! Not for real use: keys and credentials vanish with the process.
+//! Deterministic in-memory implementations for fixtures and tools. Not for
+//! real use: keys come from the supplied entropy and vanish with the process.
 
+use crate::bytes::Bytes;
+use crate::der;
+use crate::entropy::Entropy;
 use crate::types::*;
+use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
 use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{Signature, SigningKey};
-use rand::rngs::OsRng;
-use rand::RngCore;
-use std::collections::HashMap;
 
-/// Software P-256 keys held in a HashMap.
-#[derive(Default)]
-pub struct SoftBackend {
-    keys: HashMap<Vec<u8>, SigningKey>,
+/// Software P-256 keys. Signatures are RFC 6979 deterministic, so with a
+/// deterministic [`Entropy`] every output is reproducible.
+pub struct SoftBackend<E> {
+    entropy: E,
+    keys: BTreeMap<Vec<u8>, SigningKey>,
 }
 
-impl SoftBackend {
-    pub fn new() -> Self {
-        Self::default()
+impl<E: Entropy> SoftBackend<E> {
+    pub fn new(entropy: E) -> Self {
+        SoftBackend {
+            entropy,
+            keys: BTreeMap::new(),
+        }
     }
 
     pub fn key_count(&self) -> usize {
@@ -24,20 +31,33 @@ impl SoftBackend {
     }
 }
 
-impl Backend for SoftBackend {
+impl<E: Entropy> Backend for SoftBackend<E> {
+    fn random(&mut self, out: &mut [u8]) {
+        self.entropy.fill(out);
+    }
+
     fn create_key(&mut self, _rp_id: &str, _user_id: &[u8]) -> Result<NewKey, BackendError> {
-        let sk = SigningKey::random(&mut OsRng);
-        let mut handle = vec![0u8; 16];
-        OsRng.fill_bytes(&mut handle);
+        let sk = loop {
+            let mut b = [0u8; 32];
+            self.entropy.fill(&mut b);
+            if let Ok(sk) = SigningKey::from_slice(&b) {
+                break sk;
+            }
+        };
+        let mut handle = [0u8; 16];
+        self.entropy.fill(&mut handle);
         let public_key = p256::PublicKey::from(sk.verifying_key());
-        self.keys.insert(handle.clone(), sk);
-        Ok(NewKey { handle, public_key })
+        self.keys.insert(handle.to_vec(), sk);
+        Ok(NewKey {
+            handle: Bytes::copy_from_slice(&handle),
+            public_key,
+        })
     }
 
     fn sign(&mut self, handle: &[u8], message: &[u8]) -> Result<Vec<u8>, BackendError> {
         let sk = self.keys.get(handle).ok_or(BackendError::KeyNotFound)?;
         let sig: Signature = sk.sign(message);
-        Ok(sig.to_der().as_bytes().to_vec())
+        Ok(der::encode(&sig))
     }
 
     fn delete_key(&mut self, handle: &[u8]) -> Result<(), BackendError> {
@@ -49,7 +69,7 @@ impl Backend for SoftBackend {
 /// Credential store in memory.
 #[derive(Default, Debug)]
 pub struct MemoryStore {
-    creds: Vec<Credential>,
+    creds: Vec<Arc<Credential>>,
     counter: u32,
     capacity: Option<usize>,
 }
@@ -80,21 +100,22 @@ impl MemoryStore {
 }
 
 impl CredentialStore for MemoryStore {
-    fn get(&self, id: &[u8]) -> Result<Option<Credential>, StoreError> {
-        Ok(self.creds.iter().find(|c| c.id == id).cloned())
+    fn get(&self, id: &[u8]) -> Result<Option<Arc<Credential>>, StoreError> {
+        Ok(self.creds.iter().find(|c| *c.id == *id).cloned())
     }
 
-    fn list_rp(&self, rp_id: &str) -> Result<Vec<Credential>, StoreError> {
+    fn list_rp(&self, rp_id: &str) -> Result<Vec<Arc<Credential>>, StoreError> {
         Ok(self
             .creds
             .iter()
-            .filter(|c| c.rp_id == rp_id)
+            .filter(|c| c.rp_id.as_str() == rp_id)
             .cloned()
             .collect())
     }
 
-    fn insert(&mut self, cred: Credential) -> Result<(), StoreError> {
-        if self.capacity.is_some_and(|n| self.creds.len() >= n) {
+    fn insert(&mut self, cred: Arc<Credential>) -> Result<(), StoreError> {
+        let exists = self.creds.iter().any(|c| c.id == cred.id);
+        if !exists && self.capacity.is_some_and(|n| self.creds.len() >= n) {
             return Err(StoreError::Full);
         }
         self.creds.retain(|c| c.id != cred.id);
@@ -102,13 +123,13 @@ impl CredentialStore for MemoryStore {
         Ok(())
     }
 
-    fn remove(&mut self, id: &[u8]) -> Result<Option<Credential>, StoreError> {
-        let pos = self.creds.iter().position(|c| c.id == id);
+    fn remove(&mut self, id: &[u8]) -> Result<Option<Arc<Credential>>, StoreError> {
+        let pos = self.creds.iter().position(|c| *c.id == *id);
         Ok(pos.map(|p| self.creds.remove(p)))
     }
 
-    fn clear(&mut self) -> Result<Vec<Credential>, StoreError> {
-        Ok(std::mem::take(&mut self.creds))
+    fn clear(&mut self) -> Result<Vec<Arc<Credential>>, StoreError> {
+        Ok(core::mem::take(&mut self.creds))
     }
 
     fn next_sign_count(&mut self) -> Result<u32, StoreError> {
@@ -120,7 +141,7 @@ impl CredentialStore for MemoryStore {
     }
 }
 
-/// Presence provider with a fixed answer that records every request.
+/// Presence provider with a fixed answer; records every request.
 #[derive(Debug, Clone)]
 pub struct ScriptedPresence {
     pub answer: Result<Presence, PresenceError>,
@@ -128,7 +149,7 @@ pub struct ScriptedPresence {
 }
 
 impl ScriptedPresence {
-    /// Always approve, and report user verification as performed when asked.
+    /// Approve; report UV as performed when it was requested.
     pub fn approve() -> Self {
         ScriptedPresence {
             answer: Ok(Presence {
@@ -149,11 +170,8 @@ impl ScriptedPresence {
 impl UserPresence for ScriptedPresence {
     fn request(&mut self, req: &PresenceRequest) -> Result<Presence, PresenceError> {
         self.requests.push(req.clone());
-        match self.answer {
-            Ok(p) => Ok(Presence {
-                user_verified: p.user_verified && req.require_uv,
-            }),
-            Err(e) => Err(e),
-        }
+        self.answer.map(|p| Presence {
+            user_verified: p.user_verified && req.require_uv,
+        })
     }
 }
