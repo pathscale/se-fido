@@ -1,0 +1,15 @@
+[package]
+name = "ctap2"
+description = "CTAP 2.x authenticator core (GetInfo, MakeCredential, GetAssertion, ...) with pluggable key backend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ciborium.workspace = true
+p256.workspace = true
+sha2.workspace = true
+rand.workspace = true
+thiserror.workspace = true

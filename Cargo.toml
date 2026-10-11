@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ctaphid",
+    "crates/ctap2",
+    "crates/store",
+    "crates/backend-se",
+    "crates/transport-test",
+    "crates/transport-mac",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.80"
+publish = false
+
+[workspace.dependencies]
+ciborium = "0.2"
+p256 = { version = "0.13", features = ["ecdsa", "ecdh"] }
+sha2 = "0.10"
+hmac = "0.12"
+hkdf = "0.12"
+aes-gcm = "0.10"
+rand = "0.8"
+thiserror = "2"
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+tempfile = "3"
+
+ctaphid = { path = "crates/ctaphid" }
+ctap2 = { path = "crates/ctap2" }
+se-fido-store = { path = "crates/store" }
+backend-se = { path = "crates/backend-se" }
