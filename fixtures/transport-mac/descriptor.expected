@@ -18,14 +18,27 @@
   End Collection 0x0
   input report 64 bytes, output report 64 bytes
 > properties
-  ReportDescriptor = data[34] sha256=f700d2c7f19d0de4
-  VendorID = 0x0
-  ProductID = 0x0
-  Product = "se-fido"
-  Manufacturer = "se-fido"
-  SerialNumber = "0"
-  Transport = "Virtual"
-  PrimaryUsagePage = 0xf1d0
-  PrimaryUsage = 0x1
-  MaxInputReportSize = 0x40
-  MaxOutputReportSize = 0x40
+  ReportDescriptor=data[34]=06d0f10901a1010920150026ff007508954081020921150026ff00750895409102c0
+  VendorID=0x1209
+  ProductID=0x51d0
+  Product="se-fido"
+  Manufacturer="se-fido"
+  SerialNumber="0"
+  Transport="Virtual"
+  PrimaryUsagePage=0xf1d0
+  PrimaryUsage=0x0001
+  MaxInputReportSize=0x0040
+  MaxOutputReportSize=0x0040
+> blocks
+  literal_no_capture=32
+  literal_ptr_capture=40
+  descriptor=16
+  offset_isa=0
+  offset_flags=8
+  offset_reserved=12
+  offset_invoke=16
+  offset_descriptor=24
+  offset_captured=32
+  BLOCK_IS_GLOBAL=0x10000000
+  BLOCK_HAS_COPY_DISPOSE=0x2000000
+  BLOCK_NEEDS_FREE=0x1000000

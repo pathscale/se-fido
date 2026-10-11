@@ -1,28 +1,15 @@
-//! transport-mac fixtures: the HID report descriptor decoded by an
-//! independent short-item parser, and the device property set.
-//!
-//! Commands: `descriptor`, `properties`.
+//! transport-mac fixtures: report descriptor, property set, Block ABI layout.
 
 use crate::util::sha256_hex;
 use std::fmt::Write;
-use transport_mac::{properties, PropValue, DEFAULT_IDENTITY, REPORT_DESCRIPTOR};
+use transport_mac::{properties_text, DEFAULT_IDENTITY, REPORT_DESCRIPTOR};
 
-fn item_name(kind: u8, tag: u8) -> &'static str {
-    match (kind, tag) {
-        (0, 0x8) => "Input",
-        (0, 0x9) => "Output",
-        (0, 0xa) => "Collection",
-        (0, 0xc) => "End Collection",
-        (1, 0x0) => "Usage Page",
-        (1, 0x1) => "Logical Minimum",
-        (1, 0x2) => "Logical Maximum",
-        (1, 0x7) => "Report Size",
-        (1, 0x8) => "Report ID",
-        (1, 0x9) => "Report Count",
-        (2, 0x0) => "Usage",
-        _ => "?",
-    }
-}
+#[cfg(target_os = "macos")]
+use transport_mac::block::{
+    BLOCK_HAS_COPY_DISPOSE, BLOCK_IS_GLOBAL, BLOCK_NEEDS_FREE, DESCRIPTOR_SIZE,
+    LITERAL_SIZE_NO_CAPTURE, LITERAL_SIZE_PTR_CAPTURE, OFFSET_CAPTURED, OFFSET_DESCRIPTOR,
+    OFFSET_FLAGS, OFFSET_INVOKE, OFFSET_ISA, OFFSET_RESERVED,
+};
 
 fn descriptor(out: &mut String) -> Result<(), String> {
     let d = &REPORT_DESCRIPTOR;
@@ -38,11 +25,25 @@ fn descriptor(out: &mut String) -> Result<(), String> {
         if kind == 0 && tag == 0xc {
             depth -= 1;
         }
+        let name = match (kind, tag) {
+            (0, 0x8) => "Input",
+            (0, 0x9) => "Output",
+            (0, 0xa) => "Collection",
+            (0, 0xc) => "End Collection",
+            (1, 0x0) => "Usage Page",
+            (1, 0x1) => "Logical Minimum",
+            (1, 0x2) => "Logical Maximum",
+            (1, 0x7) => "Report Size",
+            (1, 0x8) => "Report ID",
+            (1, 0x9) => "Report Count",
+            (2, 0x0) => "Usage",
+            _ => "?",
+        };
         writeln!(
             out,
             "  {:indent$}{} 0x{v:x}",
             "",
-            item_name(kind, tag),
+            name,
             indent = depth.max(0) as usize * 2
         )
         .ok();
@@ -73,6 +74,28 @@ fn descriptor(out: &mut String) -> Result<(), String> {
     Ok(())
 }
 
+fn props(out: &mut String) {
+    for line in properties_text(&DEFAULT_IDENTITY).lines() {
+        writeln!(out, "  {line}").ok();
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn blocks(out: &mut String) {
+    writeln!(out, "  literal_no_capture={LITERAL_SIZE_NO_CAPTURE}").ok();
+    writeln!(out, "  literal_ptr_capture={LITERAL_SIZE_PTR_CAPTURE}").ok();
+    writeln!(out, "  descriptor={DESCRIPTOR_SIZE}").ok();
+    writeln!(out, "  offset_isa={OFFSET_ISA}").ok();
+    writeln!(out, "  offset_flags={OFFSET_FLAGS}").ok();
+    writeln!(out, "  offset_reserved={OFFSET_RESERVED}").ok();
+    writeln!(out, "  offset_invoke={OFFSET_INVOKE}").ok();
+    writeln!(out, "  offset_descriptor={OFFSET_DESCRIPTOR}").ok();
+    writeln!(out, "  offset_captured={OFFSET_CAPTURED}").ok();
+    writeln!(out, "  BLOCK_IS_GLOBAL=0x{BLOCK_IS_GLOBAL:x}").ok();
+    writeln!(out, "  BLOCK_HAS_COPY_DISPOSE=0x{BLOCK_HAS_COPY_DISPOSE:x}").ok();
+    writeln!(out, "  BLOCK_NEEDS_FREE=0x{BLOCK_NEEDS_FREE:x}").ok();
+}
+
 pub fn run(input: &str) -> Result<String, String> {
     let mut out = String::new();
     for (ln, raw_line) in input.lines().enumerate() {
@@ -83,17 +106,12 @@ pub fn run(input: &str) -> Result<String, String> {
         writeln!(out, "> {line}").ok();
         match line {
             "descriptor" => descriptor(&mut out).map_err(|e| format!("line {}: {e}", ln + 1))?,
-            "properties" => {
-                for (k, v) in properties(&DEFAULT_IDENTITY) {
-                    let v = match v {
-                        PropValue::Number(n) => format!("0x{n:x}"),
-                        PropValue::Text(t) => format!("\"{t}\""),
-                        PropValue::Data(d) => {
-                            format!("data[{}] sha256={}", d.len(), &sha256_hex(d)[..16])
-                        }
-                    };
-                    writeln!(out, "  {k} = {v}").ok();
-                }
+            "properties" => props(&mut out),
+            "blocks" => {
+                #[cfg(target_os = "macos")]
+                blocks(&mut out);
+                #[cfg(not(target_os = "macos"))]
+                return Err(format!("line {}: blocks requires macOS", ln + 1));
             }
             other => return Err(format!("line {}: unknown command {other}", ln + 1)),
         }

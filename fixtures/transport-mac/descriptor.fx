@@ -1,3 +1,4 @@
-# FIDO HID report descriptor and the virtual device property set
+# FIDO HID report descriptor, virtual device properties, Block ABI layout
 descriptor
 properties
+blocks

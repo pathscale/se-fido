@@ -67,4 +67,6 @@ Drives `FileStore` in a scratch directory with a key derived from a word.
 
 - `descriptor`: decodes the HID report descriptor with an independent
   parser and checks 64-byte input and output reports, no report IDs
-- `properties`: the virtual device property set
+- `properties`: the virtual device property set (VID/PID placeholders,
+  Transport Virtual, usage page 0xF1D0)
+- `blocks`: Apple Block ABI layout sizes and offsets (macOS)
