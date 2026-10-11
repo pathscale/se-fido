@@ -1,0 +1,20 @@
+[package]
+name = "se-fido-store"
+description = "Encrypted on-disk credential index and monotonic signature counter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "se_fido_store"
+
+[dependencies]
+ctap2.workspace = true
+ciborium.workspace = true
+aes-gcm.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
