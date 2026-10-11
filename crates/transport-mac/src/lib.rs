@@ -25,6 +25,8 @@ pub mod device;
 #[cfg(target_os = "macos")]
 pub mod ffi;
 pub mod la;
+#[cfg(feature = "std")]
+pub mod trace;
 
 /// FIDO usage page (HID Usage Tables, FIDO Alliance page).
 pub const FIDO_USAGE_PAGE: u16 = 0xf1d0;

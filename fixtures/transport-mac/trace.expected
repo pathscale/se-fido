@@ -1,0 +1,56 @@
+> in ffffffff860008a1b2c3d4e5f60718
+  se-fido: in  cid=ffffffff INIT bcnt=8
+> out ffffffff860011a1b2c3d4e5f6071800000001020001000005
+  se-fido: out cid=ffffffff INIT bcnt=17 new_cid=00000001 proto=2 caps=0x00
+> in 0000000190000104
+  se-fido: in  cid=00000001 CBOR bcnt=1 ctap=GetInfo(0x04)
+> out 0000000190000500a5010203
+  se-fido: out cid=00000001 CBOR bcnt=5 status=Ok(0x00)
+> in 0000000190008101a5015820deadbeefdeadbeef
+  se-fido: in  cid=00000001 CBOR bcnt=129 ctap=MakeCredential(0x01)
+> in 0000000100cafebabecafebabe
+  se-fido: in  cid=00000001 cont seq=0
+> out 00000001bb000102
+  se-fido: out cid=00000001 KEEPALIVE bcnt=1 status=UpNeeded(2)
+> out 00000001bf00010b
+  se-fido: out cid=00000001 ERROR bcnt=1 code=InvalidChannel(0x0b)
+> in 0000000191000000
+  se-fido: in  cid=00000001 CANCEL bcnt=0
+> in 0000000181000412345678
+  se-fido: in  cid=00000001 PING bcnt=4
+> in 0000000188000000
+  se-fido: in  cid=00000001 WINK bcnt=0
+> in 0000000184000105
+  se-fido: in  cid=00000001 LOCK bcnt=1
+> in 00000001c5000000
+  se-fido: in  cid=00000001 UNKNOWN bcnt=0
+> out 000000019000012d
+  se-fido: out cid=00000001 CBOR bcnt=1 status=KeepaliveCancel(0x2d)
+> in 000000019000016f
+  se-fido: in  cid=00000001 CBOR bcnt=1 ctap=Unknown(0x6f)
+> in 0000000183000700030000000000
+  se-fido: in  cid=00000001 MSG bcnt=7 u2f=Version(0x03)
+> in-raw 0000000001900001040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+  se-fido: in  report len=65 (expected 64)
+> in-raw 0000000190000104
+  se-fido: in  report len=8 (expected 64)
+> result cbor 00000001 04a1 00a1
+  se-fido: done cid=00000001 CBOR ctap=GetInfo(0x04) status=Ok(0x00) resp_len=2
+> result cbor 00000001 01a5015820deadbeef 00a3016470616365
+  se-fido: done cid=00000001 CBOR ctap=MakeCredential(0x01) status=Ok(0x00) resp_len=8
+> result cbor 00000001 02a2 2e
+  se-fido: done cid=00000001 CBOR ctap=GetAssertion(0x02) status=NoCredentials(0x2e) resp_len=1
+> result cbor 00000001 06a1 01
+  se-fido: done cid=00000001 CBOR ctap=ClientPIN(0x06) status=InvalidCommand(0x01) resp_len=1
+> result cbor 00000001 04 -
+  se-fido: done cid=00000001 CBOR ctap=GetInfo(0x04) status=<empty> resp_len=0
+> result msg 00000001 0003000000 5532465f56329000
+  se-fido: done cid=00000001 MSG u2f=Version(0x03) sw=0x9000 resp_len=8
+> result msg 00000001 0001030040 6985
+  se-fido: done cid=00000001 MSG u2f=Register(0x01) sw=0x6985 resp_len=2
+> getinfo uv_policy=presence
+  se-fido: getinfo versions=[FIDO_2_0,FIDO_2_1] extensions=[credProtect] aaguid=c7ce4e58-6fd2-4eb8-b193-1d528be838a5 options={rk=true,up=true,uv=true,plat=false} maxMsgSize=7609 pinUvAuthProtocols=- transports=[usb] algorithms=[-7]
+> getinfo uv_policy=biometry
+  se-fido: getinfo versions=[FIDO_2_0,FIDO_2_1] extensions=[credProtect] aaguid=c7ce4e58-6fd2-4eb8-b193-1d528be838a5 options={rk=true,up=true,uv=true,plat=false} maxMsgSize=7609 pinUvAuthProtocols=- transports=[usb] algorithms=[-7]
+> getinfo uv_policy=none
+  se-fido: getinfo versions=[FIDO_2_0,FIDO_2_1] extensions=[credProtect] aaguid=c7ce4e58-6fd2-4eb8-b193-1d528be838a5 options={rk=true,up=true,plat=false} maxMsgSize=7609 pinUvAuthProtocols=- transports=[usb] algorithms=[-7]

@@ -8,6 +8,7 @@
 use crate::block::{BlockLiteral, HeapBlock};
 use crate::cf::{cf_data, cf_dict, cf_str, cf_u32, Cf};
 use crate::ffi::*;
+use crate::trace::{describe_report, describe_result, getinfo_summary, Dir};
 use crate::{properties, DeviceIdentity, PropValue, DEFAULT_IDENTITY, REPORT_SIZE};
 use backend_se::{storage_key, AccessPolicy, SeBackend, StorageMode, SystemEntropy};
 use ctap2::{
@@ -16,12 +17,27 @@ use ctap2::{
 };
 use ctaphid::{keepalive_packet, Action, Command, Config, KeepaliveStatus, Packet, Server};
 use se_fido_store::{default_dir, FileStore};
+use std::cell::Cell;
 use std::ffi::{c_void, CString};
 use std::path::PathBuf;
 use std::ptr::null;
 use std::time::Instant;
 
 const KEEPALIVE_MS: u64 = 100;
+
+/// One log line to stderr (launchd sends it to target/se-run.log).
+fn log(line: &str) {
+    eprintln!("se-fido: {line}");
+}
+
+fn report_type_name(t: IOHIDReportType) -> &'static str {
+    match t {
+        0 => "input",
+        1 => "output",
+        2 => "feature",
+        _ => "unknown",
+    }
+}
 
 type Auth = Authenticator<SeBackend, FileStore<SystemEntropy>, DevicePresence>;
 
@@ -134,6 +150,9 @@ struct Inner {
     pending: Option<Pending>,
     timer: DispatchSource,
     started: Instant,
+    /// Keepalives repeat every 100 ms while a request waits; log only the
+    /// first one per request.
+    keepalive_logged: Cell<bool>,
 }
 
 impl Inner {
@@ -143,6 +162,7 @@ impl Inner {
 
     fn send_packets(&self, packets: &[Packet]) {
         for p in packets {
+            self.log_out(p);
             let kr = unsafe {
                 IOHIDUserDeviceHandleReportWithTimeStamp(
                     self.device,
@@ -157,6 +177,19 @@ impl Inner {
         }
     }
 
+    fn log_out(&self, p: &Packet) {
+        if p[4] & ctaphid::TYPE_INIT == 0 {
+            return;
+        }
+        if p[4] & !ctaphid::TYPE_INIT == Command::Keepalive as u8 {
+            if self.keepalive_logged.get() {
+                return;
+            }
+            self.keepalive_logged.set(true);
+        }
+        log(&describe_report(Dir::Out, p));
+    }
+
     fn send_keepalive(&self, cid: u32, status: KeepaliveStatus) {
         self.send_packets(&[keepalive_packet(cid, status)]);
     }
@@ -168,6 +201,7 @@ impl Inner {
             Action::Process { cid, cmd, payload } => {
                 // Defer application work so Cancel and the keepalive timer can
                 // run on this queue before we block on Secure Enclave ops.
+                self.keepalive_logged.set(false);
                 self.pending = Some(Pending {
                     cid,
                     cmd,
@@ -183,6 +217,7 @@ impl Inner {
                 }
             }
             Action::Cancel { cid } => {
+                log(&format!("cancel cid={cid:08x}"));
                 if self.pending.as_ref().is_some_and(|p| p.cid == cid) {
                     self.pending = None;
                 }
@@ -203,19 +238,41 @@ impl Inner {
             Command::Msg => ctap2::u2f::process(payload.as_slice()),
             _ => self.auth.process(&payload, self.now_ms()),
         };
+        log(&describe_result(cid, cmd, payload.as_slice(), &resp));
+        if cmd == Command::Cbor && payload.first() == Some(&ctap2::command::GET_INFO) {
+            log(&getinfo_summary(&resp));
+        }
         match self.server.response(cid, cmd, &resp) {
             Ok(p) => self.send_packets(&p),
             Err(e) => eprintln!("se-fido: fragment response: {e}"),
         }
     }
 
-    fn on_set_report(&mut self, report_type: IOHIDReportType, report: &[u8]) -> IOReturn {
+    fn on_set_report(
+        &mut self,
+        report_type: IOHIDReportType,
+        report_id: u32,
+        report: &[u8],
+    ) -> IOReturn {
         if report_type != kIOHIDReportTypeOutput {
+            log(&format!(
+                "set-report rejected: type={} id={report_id} len={}",
+                report_type_name(report_type),
+                report.len()
+            ));
             return kIOReturnUnsupported;
         }
         if report.len() != REPORT_SIZE {
+            log(&format!(
+                "set-report rejected: type=output id={report_id} len={} (expected {REPORT_SIZE})",
+                report.len()
+            ));
             return kIOReturnBadArgument;
         }
+        log(&format!(
+            "set-report id={report_id} {}",
+            describe_report(Dir::In, report)
+        ));
         let mut packet = [0u8; REPORT_SIZE];
         packet.copy_from_slice(report);
         let now = self.now_ms();
@@ -252,11 +309,15 @@ unsafe extern "C" fn timer_f(ctx: *mut c_void) {
 unsafe extern "C" fn set_report_invoke(
     block: *mut c_void,
     report_type: IOHIDReportType,
-    _report_id: u32,
+    report_id: u32,
     report: *const u8,
     report_length: CFIndex,
 ) -> IOReturn {
     if report.is_null() || report_length <= 0 {
+        log(&format!(
+            "set-report rejected: type={} id={report_id} len={report_length} (null or empty)",
+            report_type_name(report_type)
+        ));
         return kIOReturnBadArgument;
     }
     let literal = block as *mut BlockLiteral<*mut c_void>;
@@ -265,17 +326,21 @@ unsafe extern "C" fn set_report_invoke(
         return kIOReturnError;
     }
     let slice = std::slice::from_raw_parts(report, report_length as usize);
-    (*inner).on_set_report(report_type, slice)
+    (*inner).on_set_report(report_type, report_id, slice)
 }
 
 /// GetReportBlock: unused by CTAPHID interrupt OUT.
 unsafe extern "C" fn get_report_invoke(
     _block: *mut c_void,
-    _report_type: IOHIDReportType,
-    _report_id: u32,
+    report_type: IOHIDReportType,
+    report_id: u32,
     _report: *mut u8,
     _report_length: *mut CFIndex,
 ) -> IOReturn {
+    log(&format!(
+        "get-report type={} id={report_id} (unsupported)",
+        report_type_name(report_type)
+    ));
     kIOReturnUnsupported
 }
 
@@ -286,6 +351,7 @@ unsafe extern "C" fn cancel_invoke(block: *mut c_void) {
     if inner.is_null() {
         return;
     }
+    log("cancel handler fired (device cancelled by the system)");
     // Release the IOHIDUserDevice and free Inner after cancel completes.
     let inner = Box::from_raw(inner);
     if !inner.device.is_null() {
@@ -410,7 +476,21 @@ pub unsafe fn run(opts: &DeviceOptions) -> Result<(), String> {
         eprintln!("se-fido: WARNING starting with --auto-approve; presence is not verified");
     }
     let dir = data_dir()?;
-    let auth = open_authenticator(dir, opts)?;
+    let mut auth = open_authenticator(dir, opts)?;
+    let id = &DEFAULT_IDENTITY;
+    log(&format!(
+        "starting: VendorID=0x{:04x} ProductID=0x{:04x} Product=\"{}\" Transport={} \
+         usage page 0x{:04x} uv_policy={} attestation={:?}",
+        id.vendor_id,
+        id.product_id,
+        id.product,
+        id.transport,
+        crate::FIDO_USAGE_PAGE,
+        opts.uv_policy.as_str(),
+        opts.attestation,
+    ));
+    let info = auth.process(&Bytes::new(vec![ctap2::command::GET_INFO].into()), 0);
+    log(&format!("advertised {}", getinfo_summary(&info)));
     let dict = build_properties_dict(&DEFAULT_IDENTITY);
 
     let label = CString::new("com.se-fido.device").unwrap();
@@ -446,6 +526,7 @@ pub unsafe fn run(opts: &DeviceOptions) -> Result<(), String> {
         pending: None,
         timer,
         started: Instant::now(),
+        keepalive_logged: Cell::new(false),
     });
     let inner_ptr = Box::into_raw(inner);
 

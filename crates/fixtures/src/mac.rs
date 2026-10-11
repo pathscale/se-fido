@@ -1,7 +1,17 @@
-//! transport-mac fixtures: report descriptor, property set, Block ABI layout.
+//! transport-mac fixtures: report descriptor, property set, Block ABI layout,
+//! and the privacy-safe trace lines the device writes to its log.
+//!
+//! Trace commands: `in HEX` / `out HEX` describe one report (HEX is zero
+//! padded to 64 bytes), `in-raw HEX` keeps the given length, `result CMD
+//! CID REQHEX RESPHEX` describes a finished request, `getinfo
+//! uv_policy=none|presence|biometry` summarises a soft authenticator GetInfo.
 
-use crate::util::sha256_hex;
+use crate::util::{sha256_hex, unhex};
+use ctap2::soft::{MemoryStore, ScriptedPresence, SoftBackend};
+use ctap2::{Authenticator, AuthenticatorConfig, Bytes, TestDrbg, UvPolicy};
+use ctaphid::Command;
 use std::fmt::Write;
+use transport_mac::trace::{describe_report, describe_result, getinfo_summary, Dir};
 use transport_mac::{properties_text, DEFAULT_IDENTITY, REPORT_DESCRIPTOR};
 
 #[cfg(target_os = "macos")]
@@ -96,6 +106,69 @@ fn blocks(out: &mut String) {
     writeln!(out, "  BLOCK_NEEDS_FREE=0x{BLOCK_NEEDS_FREE:x}").ok();
 }
 
+fn packet(hex: &str, pad: bool) -> Result<Vec<u8>, String> {
+    let mut p = unhex(hex)?;
+    if pad {
+        if p.len() > 64 {
+            return Err("packet longer than 64 bytes".into());
+        }
+        p.resize(64, 0);
+    }
+    Ok(p)
+}
+
+fn trace(line: &str, out: &mut String) -> Result<(), String> {
+    let mut words = line.split_whitespace();
+    let verb = words.next().unwrap_or("");
+    let rest: Vec<&str> = words.collect();
+    let one = |i: usize| {
+        rest.get(i)
+            .copied()
+            .ok_or(format!("{verb}: missing argument"))
+    };
+    let text = match verb {
+        "in" => describe_report(Dir::In, &packet(one(0)?, true)?),
+        "out" => describe_report(Dir::Out, &packet(one(0)?, true)?),
+        "in-raw" => describe_report(Dir::In, &packet(one(0)?, false)?),
+        "result" => {
+            let cmd = match one(0)? {
+                "cbor" => Command::Cbor,
+                "msg" => Command::Msg,
+                other => return Err(format!("result: bad command {other}")),
+            };
+            let cid = u32::from_str_radix(one(1)?, 16).map_err(|e| e.to_string())?;
+            let req = unhex(one(2)?)?;
+            let resp = if one(3)? == "-" {
+                Vec::new()
+            } else {
+                unhex(one(3)?)?
+            };
+            describe_result(cid, cmd, &req, &resp)
+        }
+        "getinfo" => {
+            let policy = one(0)?
+                .strip_prefix("uv_policy=")
+                .and_then(UvPolicy::parse)
+                .ok_or("getinfo: need uv_policy=none|presence|biometry")?;
+            let cfg = AuthenticatorConfig {
+                default_uv_policy: policy,
+                ..AuthenticatorConfig::default()
+            };
+            let mut auth = Authenticator::new(
+                SoftBackend::new(TestDrbg::new([7; 32])),
+                MemoryStore::new(),
+                ScriptedPresence::approve(),
+                cfg,
+            );
+            let resp = auth.process(&Bytes::new(vec![ctap2::command::GET_INFO].into()), 0);
+            getinfo_summary(&resp)
+        }
+        _ => return Err(format!("unknown command {verb}")),
+    };
+    writeln!(out, "  se-fido: {text}").ok();
+    Ok(())
+}
+
 pub fn run(input: &str) -> Result<String, String> {
     let mut out = String::new();
     for (ln, raw_line) in input.lines().enumerate() {
@@ -113,7 +186,7 @@ pub fn run(input: &str) -> Result<String, String> {
                 #[cfg(not(target_os = "macos"))]
                 return Err(format!("line {}: blocks requires macOS", ln + 1));
             }
-            other => return Err(format!("line {}: unknown command {other}", ln + 1)),
+            other => trace(other, &mut out).map_err(|e| format!("line {}: {e}", ln + 1))?,
         }
     }
     Ok(out)
