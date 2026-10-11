@@ -670,9 +670,19 @@ const STORE_PEER_PUB: &str = "store-peer.pub";
 
 /// 32-byte credential index key bound to this Mac Secure Enclave.
 ///
-/// First use creates an SE key (no prompt) and a throwaway software key
-/// pair whose public half is saved. Key = HKDF-SHA256(ECDH(se, peer)).
-/// Losing `store-key.handle` makes the index unreadable (no backup by design).
+/// First use creates an SE key with [`AccessPolicy::None`] (no prompt; only
+/// `kSecAccessControlPrivateKeyUsage`) and a throwaway software key pair whose
+/// public half is saved as `store-peer.pub`. The SE token object blob is saved
+/// as `store-key.handle`. Key material is
+/// `HKDF-SHA256(ECDH(se_private, peer_public), info="se-fido store key")`.
+///
+/// The wrapping key never leaves the derivation: only the SE-bound handle and
+/// the peer public key are on disk. Losing `store-key.handle` makes the
+/// credential index unreadable (no backup by design).
+///
+/// Unverified: whether a `toid` blob remains usable after rebuilding or
+/// re-signing this binary, or from another process on the same Mac. Treat
+/// cross-binary reload as unproven until exercised on a deployed device.
 pub fn storage_key(dir: &Path) -> Result<[u8; 32], SeError> {
     let io = |e: std::io::Error| SeError::plain("storage_key io", e.to_string());
     std::fs::create_dir_all(dir).map_err(io)?;
