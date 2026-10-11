@@ -87,9 +87,11 @@ VendorID `0x1209` / ProductID `0x51d0` are our placeholders (pid.codes open
 vendor domain + se-fido mnemonic), not USB-IF assignments. Transport is
 `"Virtual"`. Browsers match on usage page 0xF1D0.
 
-Presence today is auto-approve (`ImmediatePresence`). Touch ID (M5) will
-replace that with an async LocalAuthentication callback posted onto the
-same queue; the keepalive timer path is already there.
+Presence: default UV policy is `presence` (SE `kSecAccessControlUserPresence`).
+`none` and `biometry` are selectable per device (`--uv-policy`). UP when the
+SE will not prompt uses LocalAuthentication via `objc_msgSend` (passcode
+allowed for `none`). `--auto-approve` is opt-in only and logged loudly.
+Keepalive UPNEEDED while a request is pending on the queue.
 
 ## Permissions
 

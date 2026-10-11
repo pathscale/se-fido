@@ -41,7 +41,7 @@ Drives `ctap2::Authenticator` on `SoftBackend` + `MemoryStore` +
 verified relying-party side (rpIdHash, flags, COSE key on curve, packed
 self attestation, ECDSA signature with p256, counter strictly increasing).
 
-- `seed WORD`, `config attestation=packed|none uv=on|off capacity=N`
+- `seed WORD`, `config attestation=packed|none uv_policy=none|presence|biometry capacity=N`
 - `transport hid`: route every request through CTAPHID packets
 - `presence approve|nouv|deny|cancel|timeout|uvfail`, `time MS`
 - `check store=N keys=N counter=N presence=N`

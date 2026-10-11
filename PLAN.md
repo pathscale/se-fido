@@ -58,11 +58,16 @@ webauthn.io in Chrome and Safari.
 
 Fallback DriverKit route remains design-only in DESIGN.md.
 
-## M5 Presence, UV, packaging
+## M5 Presence, UV, packaging (code ready; device run blocked on reboot)
 
-- Touch ID through LocalAuthentication, asynchronous, posted back to the
-  device queue; KEEPALIVE every 100 ms while waiting; CANCEL honoured.
-- SE keys with a biometry access control as an option.
-- launchd agent, start at login.
-- Later: CTAP 2.1 (`FIDO_2_1`), credProtect, credential management,
-  clientPin if a platform requires it.
+- UV policy per credential: `none` / `presence` (default) / `biometry`,
+  stored with the credential; SE ACL set at key creation; GetInfo/authData
+  UV bits honest per mode.
+- LocalAuthentication (objc_msgSend) for UP when SE will not prompt;
+  `--auto-approve` opt-in only and logged loudly.
+- KEEPALIVE UPNEEDED while a request is pending; CANCEL -> CTAP2 0x2d;
+  SE/LA cancel -> OperationDenied.
+- launchd template in `contrib/launchd/` (not installed).
+- GetInfo: FIDO_2_0 + FIDO_2_1, credProtect advertised; CTAP1 VERSION only.
+- Still requires DEPLOY.md reboot before `--run`. User should then run
+  `se-probe --touchid` and a browser registration.

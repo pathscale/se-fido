@@ -147,3 +147,21 @@ Kill the `se-fido-device` process. The device node should disappear from
 - No DriverKit dext.
 - No Touch ID (M5).
 - No Apple Developer Program provisioning of the entitlement.
+
+## After the device works
+
+1. Probe SE keys that require user presence (will prompt):
+
+   ```
+   target/debug/se-probe --touchid
+   ```
+
+2. Prefer a UV policy explicitly:
+
+   ```
+   ./target/debug/se-fido-device --run --uv-policy=presence
+   ./target/debug/se-fido-device --run --uv-policy=none
+   ./target/debug/se-fido-device --run --uv-policy=biometry
+   ```
+
+3. Never leave `--auto-approve` on for real use.

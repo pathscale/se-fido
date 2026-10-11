@@ -27,11 +27,17 @@ decrypted store buffer.
 
 ## What the authenticator advertises
 
-- versions `FIDO_2_0` only; ES256 only; transports `usb`
-- options `rk`, `up`, `uv` (built-in UV, Touch ID in M5), `plat=false`
-- no `clientPin`: a zero-length pinUvAuthParam (the platform touch probe)
-  waits for presence and returns `PIN_NOT_SET`; anything else PIN related
-  is rejected
+- versions `FIDO_2_0` and `FIDO_2_1`; extension `credProtect` (accepted/echoed);
+  ES256 only; transports `usb`
+- options `rk`, `up`, `plat=false`; `uv` only when the default UV policy is
+  `presence` or `biometry` (not `none`)
+- UV policy per credential (default `presence`): `none` (no SE prompt; UP via
+  LocalAuthentication with passcode allowed), `presence` (Touch ID or device
+  password on each SE private-key use), `biometry` (Touch ID, current set)
+- no `clientPin`: zero-length pinUvAuthParam waits for presence and returns
+  `PIN_NOT_SET`; `pinUvAuthProtocols` omitted
+- CTAP1: `U2F_VERSION` only over CTAPHID_MSG; REGISTER/AUTHENTICATE return
+  SW 0x6d00
 - attestation: `packed` self attestation (default) or `none`
 - maxMsgSize 7609
 
@@ -48,14 +54,14 @@ bytes of that one constant with a fresh UUIDv4 and run
 ## Secure Enclave storage
 
 Keys are P-256, created with `kSecAttrTokenIDSecureEnclave` and
-`permanent=false`. The key token object (`toid`, 324 bytes) is stored as
-the credential key handle and reloaded with `SecKeyCreateWithData`. The
-private key never leaves the Secure Enclave; the blob is only usable by the
-SE that wrapped it.
+`permanent=false`. Access control follows the credential UV policy
+(`none` / `presence` / `biometry`). The key token object (`toid`, 324
+bytes) is stored as the credential key handle and reloaded with
+`SecKeyCreateWithData`. The private key never leaves the Secure Enclave.
 
-The credential index is encrypted with a key derived by HKDF-SHA256 from
-ECDH between a Secure Enclave key and a saved throwaway public key, so the
-index can only be opened on this Mac.
+The credential index is encrypted with a key from SE ECDH + HKDF (see
+`backend_se::storage_key`). Unverified: `toid` reload after rebuild or
+re-signing the binary, or from another process.
 
 Keychain storage (`permanent=true`) fails with OSStatus -34018 for
 binaries without a keychain-access-group entitlement, so blob mode is the
