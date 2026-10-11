@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  User LaunchAgent template for se-fido-device.
+  Copy to ~/Library/LaunchAgents/com.se-fido.device.plist and replace
+  every __PLACEHOLDER__. Do not commit a filled-in copy (no machine-local paths).
+
+  load:   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.se-fido.device.plist
+  unload: launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.se-fido.device.plist
+
+  The binary must be ad-hoc codesigned with entitlements (see DEPLOY.md) and
+  SIP/AMFI must allow the restricted entitlement before this will work.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.se-fido.device</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__SE_FIDO_DEVICE_BIN__</string>
+		<string>--run</string>
+		<string>--uv-policy=__UV_POLICY__</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>SE_FIDO_DIR</key>
+		<string>__SE_FIDO_DIR__</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>__LOG_DIR__/se-fido-device.out.log</string>
+	<key>StandardErrorPath</key>
+	<string>__LOG_DIR__/se-fido-device.err.log</string>
+</dict>
+</plist>
