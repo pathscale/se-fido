@@ -32,7 +32,7 @@ pub struct AuthenticatorConfig {
     pub max_msg_size: u32,
     /// Advertise FIDO_2_1 in versions (always with FIDO_2_0).
     pub advertise_fido21: bool,
-    /// Advertise the credProtect extension (accepted and echoed; see PLAN).
+    /// Advertise the implemented credProtect extension.
     pub advertise_cred_protect: bool,
 }
 
@@ -240,8 +240,7 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
             ),
         ];
         if self.config.advertise_cred_protect {
-            // 0x02: extensions. credProtect is accepted on make/get and echoed;
-            // enforcement of extension min levels is best-effort (see PLAN).
+            // 0x02: supported extensions.
             map.insert(
                 1,
                 (Out::Int(0x02), Out::Array(vec![Out::Text("credProtect")])),
@@ -258,11 +257,23 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
         user_name: Option<&Text>,
         require_uv: bool,
     ) -> Result<Presence, Status> {
+        self.ask_with_policy(kind, rp_id, user_name, require_uv, None)
+    }
+
+    fn ask_with_policy(
+        &mut self,
+        kind: PresenceKind,
+        rp_id: Option<&Text>,
+        user_name: Option<&Text>,
+        require_uv: bool,
+        key_uv_policy: Option<UvPolicy>,
+    ) -> Result<Presence, Status> {
         let req = PresenceRequest {
             kind,
             rp_id: rp_id.cloned(),
             user_name: user_name.cloned(),
             require_uv,
+            key_uv_policy,
         };
         let p = self.presence.request(&req).map_err(|e| match e {
             PresenceError::Denied | PresenceError::UvFailed => Status::OperationDenied,
@@ -360,9 +371,21 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
             Some(v) => parse_descriptors(v)?,
             None => Vec::new(),
         };
-        if let Some(ext) = m.get(0x06) {
-            ext.as_map()?; // no extensions supported, but must be a map
-        }
+        let cred_protect = if let Some(ext) = m.get(0x06) {
+            ext.as_map()?;
+            match ext.get_text("credProtect") {
+                Some(value) => {
+                    let level = value.as_int()?;
+                    if !(1..=3).contains(&level) {
+                        return Err(Status::InvalidParameter);
+                    }
+                    Some(level as u8)
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
         let opts = parse_options(m.get(0x07))?;
         if m.get(0x0a).is_some() {
             return Err(Status::InvalidParameter); // enterprise attestation
@@ -394,7 +417,7 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
 
         let policy = self.config.default_uv_policy;
         // Platform asked for UV but this authenticator's default policy cannot.
-        if want_uv && !policy.supports_uv() {
+        if (want_uv || cred_protect == Some(3)) && !policy.supports_uv() {
             return Err(Status::UnsupportedOption);
         }
         let presence = self.ask(
@@ -413,8 +436,14 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
             .backend
             .create_key(rp_id.as_str(), &user_id, policy)
             .map_err(backend_err)?;
-        let mut cred_id = [0u8; CREDENTIAL_ID_LEN];
-        self.backend.random(&mut cred_id);
+        let mut random_id = [0u8; CREDENTIAL_ID_LEN];
+        self.backend.random(&mut random_id);
+        let mut cred_id = Vec::with_capacity(CREDENTIAL_ID_LEN + 5);
+        if let Some(level) = cred_protect {
+            cred_id.extend_from_slice(b"SFCP");
+            cred_id.push(level);
+        }
+        cred_id.extend_from_slice(&random_id);
         let counter = match self.store.next_sign_count() {
             Ok(c) => c,
             Err(e) => {
@@ -437,6 +466,12 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
         });
 
         let cose = authdata::cose_key(&key.public_key);
+        let extensions = cred_protect.map(|level| {
+            encode(&Out::Map(vec![(
+                Out::Text("credProtect"),
+                Out::Int(level as i64),
+            )]))
+        });
         let auth_data = authdata::build(
             rp_id.as_str(),
             flags,
@@ -446,7 +481,7 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
                 credential_id: &cred_id,
                 cose_key: &cose,
             }),
-            None,
+            extensions.as_deref(),
         );
         let sig = match self.config.attestation {
             AttestationFormat::None => None,
@@ -594,28 +629,40 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
             creds.sort_by_key(|c| core::cmp::Reverse(c.created));
         }
 
+        let key_uv_policy = if creds.is_empty() {
+            None
+        } else if creds.iter().any(|cred| !cred.uv_policy.supports_uv()) {
+            Some(UvPolicy::None)
+        } else {
+            Some(creds[0].uv_policy)
+        };
         let mut flags = 0u8;
         let mut user_verified = false;
         if want_up || want_uv {
-            // Presence is collected even if nothing matches, so sites cannot
-            // silently probe for credentials.
-            let p = self.ask(PresenceKind::GetAssertion, Some(&rp_id), None, want_uv)?;
+            // Missing keys and any None-policy key require explicit presence.
+            let p = self.ask_with_policy(
+                PresenceKind::GetAssertion,
+                Some(&rp_id),
+                None,
+                want_uv,
+                key_uv_policy,
+            )?;
             if want_up {
                 flags |= FLAG_UP;
             }
-            // Provisional UV; cleared per credential if its policy is None.
-            if p.user_verified {
-                user_verified = true;
-            }
+            user_verified = p.user_verified;
         }
+        creds.retain(|cred| {
+            let verified = user_verified && cred.uv_policy.supports_uv();
+            (!want_uv || verified) && cred.allows_assertion(using_allow_list, verified)
+        });
         if creds.is_empty() {
             return Err(Status::NoCredentials);
         }
         let first = creds.remove(0);
-        if user_verified && first.uv_policy.supports_uv() {
+        let first_verified = user_verified && first.uv_policy.supports_uv();
+        if first_verified {
             flags |= FLAG_UV;
-        } else {
-            user_verified = false;
         }
         let total = if !using_allow_list && !creds.is_empty() {
             Some(creds.len() + 1)
@@ -626,7 +673,7 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
             &rp_id,
             &client_data_hash,
             flags,
-            user_verified,
+            first_verified,
             &first,
             total,
         )?;
@@ -653,6 +700,9 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
         let cred = p.remaining.remove(0);
         let mut flags = p.flags & !FLAG_UV;
         let uv = p.user_verified && cred.uv_policy.supports_uv();
+        if !cred.allows_assertion(false, uv) {
+            return Err(Status::NotAllowed);
+        }
         if uv {
             flags |= FLAG_UV;
         }

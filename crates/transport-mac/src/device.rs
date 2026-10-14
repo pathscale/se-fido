@@ -70,11 +70,20 @@ struct DevicePresence {
 
 impl DevicePresence {
     fn reason(req: &PresenceRequest) -> String {
-        let rp = req
+        let rp: String = req
             .rp_id
             .as_ref()
             .map(|t| t.as_str())
-            .unwrap_or("this site");
+            .unwrap_or("this site")
+            .chars()
+            .filter(|ch| !ch.is_control() && !matches!(ch, '\u{2028}' | '\u{2029}'))
+            .take(128)
+            .collect();
+        let rp = if rp.trim().is_empty() {
+            "this site"
+        } else {
+            rp.as_str()
+        };
         match req.kind {
             PresenceKind::MakeCredential => format!("Create a passkey for {rp}"),
             PresenceKind::GetAssertion => format!("Sign in to {rp}"),
@@ -86,14 +95,14 @@ impl DevicePresence {
     }
 
     /// True when the next private-key use will trigger an SE ACL prompt.
-    fn se_will_prompt(&self, kind: PresenceKind) -> bool {
-        if !self.opts.uv_policy.supports_uv() {
-            return false;
-        }
-        match kind {
-            PresenceKind::GetAssertion => true,
+    fn se_will_prompt(&self, req: &PresenceRequest) -> bool {
+        match req.kind {
+            PresenceKind::GetAssertion => {
+                req.key_uv_policy.is_some_and(|policy| policy.supports_uv())
+            }
             PresenceKind::MakeCredential => {
-                !matches!(self.opts.attestation, AttestationFormat::None)
+                self.opts.uv_policy.supports_uv()
+                    && !matches!(self.opts.attestation, AttestationFormat::None)
             }
             _ => false,
         }
@@ -102,24 +111,25 @@ impl DevicePresence {
 
 impl UserPresence for DevicePresence {
     fn request(&mut self, req: &PresenceRequest) -> Result<Presence, PresenceError> {
+        let policy = req.key_uv_policy.unwrap_or(self.opts.uv_policy);
         if self.opts.auto_approve {
             eprintln!(
                 "se-fido: WARNING --auto-approve is ON; accepting {:?} without LA/Touch ID",
                 req.kind
             );
             return Ok(Presence {
-                user_verified: req.require_uv && self.opts.uv_policy.supports_uv(),
+                user_verified: req.require_uv && policy.supports_uv(),
             });
         }
-        if self.se_will_prompt(req.kind) {
+        if self.se_will_prompt(req) {
             // SE key ACL prompts on SecKeyCreateSignature; claim UV intent.
             // Cancel/deny from the SE maps to BackendError::Cancelled.
             return Ok(Presence {
-                user_verified: self.opts.uv_policy.supports_uv(),
+                user_verified: policy.supports_uv(),
             });
         }
         // Explicit UP: LA with passcode allowed (UvPolicy::None non-biometric path).
-        let biometry_only = matches!(self.opts.uv_policy, UvPolicy::Biometry)
+        let biometry_only = (req.require_uv || matches!(policy, UvPolicy::Biometry))
             && matches!(
                 req.kind,
                 PresenceKind::MakeCredential | PresenceKind::GetAssertion
@@ -130,8 +140,8 @@ impl UserPresence for DevicePresence {
             std::time::Duration::from_secs(60),
         )
         .map(|p| Presence {
-            // UV bit only when policy supports it and LA reported biometry.
-            user_verified: self.opts.uv_policy.supports_uv() && p.user_verified,
+            // Credential policy is checked by CTAP before setting its UV bit.
+            user_verified: p.user_verified,
         })
     }
 }
@@ -148,6 +158,7 @@ struct Inner {
     device: IOHIDUserDeviceRef,
     queue: DispatchQueue,
     pending: Option<Pending>,
+    assertion_cid: Option<u32>,
     timer: DispatchSource,
     started: Instant,
     /// Keepalives repeat every 100 ms while a request waits; log only the
@@ -221,6 +232,9 @@ impl Inner {
                 if self.pending.as_ref().is_some_and(|p| p.cid == cid) {
                     self.pending = None;
                 }
+                if self.assertion_cid == Some(cid) {
+                    self.assertion_cid = None;
+                }
                 self.server.abort(cid);
                 if let Ok(p) = self.server.response(cid, Command::Cbor, &[0x2d]) {
                     self.send_packets(&p);
@@ -234,9 +248,27 @@ impl Inner {
             return;
         };
         self.send_keepalive(cid, KeepaliveStatus::UpNeeded);
-        let resp = match cmd {
-            Command::Msg => ctap2::u2f::process(payload.as_slice()),
-            _ => self.auth.process(&payload, self.now_ms()),
+        let is_next =
+            cmd == Command::Cbor && payload.first() == Some(&ctap2::command::GET_NEXT_ASSERTION);
+        let resp = if is_next && self.assertion_cid != Some(cid) {
+            vec![ctap2::Status::NotAllowed.code()]
+        } else {
+            if !is_next {
+                self.assertion_cid = None;
+            }
+            let resp = match cmd {
+                Command::Msg => ctap2::u2f::process(payload.as_slice()),
+                _ => self.auth.process(&payload, self.now_ms()),
+            };
+            if cmd == Command::Cbor
+                && payload.first() == Some(&ctap2::command::GET_ASSERTION)
+                && resp.first() == Some(&ctap2::Status::Ok.code())
+            {
+                self.assertion_cid = Some(cid);
+            } else if is_next && resp.first() != Some(&ctap2::Status::Ok.code()) {
+                self.assertion_cid = None;
+            }
+            resp
         };
         log(&describe_result(cid, cmd, payload.as_slice(), &resp));
         if cmd == Command::Cbor && payload.first() == Some(&ctap2::command::GET_INFO) {
@@ -524,6 +556,7 @@ pub unsafe fn run(opts: &DeviceOptions) -> Result<(), String> {
         device,
         queue,
         pending: None,
+        assertion_cid: None,
         timer,
         started: Instant::now(),
         keepalive_logged: Cell::new(false),
