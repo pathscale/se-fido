@@ -424,7 +424,7 @@ fn open_authenticator(dir: PathBuf, opts: &DeviceOptions) -> Result<Auth, String
     let store =
         FileStore::open(dir.join("store"), &key, SystemEntropy).map_err(|e| e.to_string())?;
     // Per-key ACL is chosen in create_key from UvPolicy; backend default unused.
-    let backend = SeBackend::new(StorageMode::Blob, AccessPolicy::None);
+    let backend = SeBackend::new(StorageMode::Keychain, AccessPolicy::None);
     let cfg = AuthenticatorConfig {
         default_uv_policy: opts.uv_policy,
         attestation: opts.attestation,

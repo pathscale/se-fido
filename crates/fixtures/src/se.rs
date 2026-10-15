@@ -26,7 +26,7 @@ fn open(dir: &std::path::Path) -> Result<Auth, String> {
     let store =
         FileStore::open(dir.join("store"), &key, SystemEntropy).map_err(|e| e.to_string())?;
     Ok(Authenticator::new(
-        SeBackend::new(StorageMode::Blob, AccessPolicy::None),
+        SeBackend::new(StorageMode::Keychain, AccessPolicy::None),
         store,
         ScriptedPresence::approve(),
         AuthenticatorConfig {

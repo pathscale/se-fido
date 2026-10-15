@@ -53,19 +53,27 @@ bytes of that one constant with a fresh UUIDv4 and run
 
 ## Secure Enclave storage
 
-Keys are P-256, created with `kSecAttrTokenIDSecureEnclave` and
-`permanent=false`. Access control follows the credential UV policy
-(`none` / `presence` / `biometry`). The key token object (`toid`, 324
-bytes) is stored as the credential key handle and reloaded with
-`SecKeyCreateWithData`. The private key never leaves the Secure Enclave.
+Credential keys are permanent data-protection Keychain items backed by the
+Secure Enclave. Each encrypted credential index record stores a non-secret
+application-tag reference to its keychain item, rather than a private-key
+secret or Secure Enclave token object blob. The index is encrypted with
+ChaCha20-Poly1305 using a key derived from Secure Enclave ECDH and HKDF.
+The storage key's Keychain tag is bound to the canonical data-directory path;
+moving that directory requires explicit migration. Only the peer public key
+is saved as `store-peer.pub`; the derived key stays in memory.
+If Keychain creation or access fails, startup and credential operations return
+an error; there is no plaintext secret fallback.
 
-The credential index is encrypted with a key from SE ECDH + HKDF (see
-`backend_se::storage_key`). Unverified: `toid` reload after rebuild or
-re-signing the binary, or from another process.
+The `se-probe` capability probe uses non-permanent Blob keys in memory only.
+Durable authenticators use permanent Keychain keys. Legacy credential
+directories containing Blob handles are not migrated automatically. They
+require an explicit migration or credential re-enrollment.
 
-Keychain storage (`permanent=true`) fails with OSStatus -34018 for
-binaries without a keychain-access-group entitlement, so blob mode is the
-default.
+The required `keychain-access-groups` entitlement is included in the
+entitlements file. Its group must match the access authorized by the binary's
+signing identity and provisioning profile. A plist entry alone does not grant
+Keychain access. Missing entitlement or unavailable Keychain storage is a hard
+error.
 
 ## Build and check
 
