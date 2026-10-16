@@ -609,7 +609,13 @@ impl SeBackend {
             Some((&HANDLE_BLOB, blob)) if self.mode == StorageMode::Blob => {
                 SecKey::from_blob_any(blob).map(|(k, _)| k)
             }
-            Some((&HANDLE_KEYCHAIN, tag)) => SecKey::find_in_keychain(tag, true),
+            Some((&HANDLE_KEYCHAIN, tag))
+                if self.mode == StorageMode::Keychain
+                    && tag.starts_with(TAG_PREFIX)
+                    && tag.len() > TAG_PREFIX.len() =>
+            {
+                SecKey::find_in_keychain(tag, true)
+            }
             _ => Err(SeError::status("load", errSecItemNotFound)),
         }
     }
@@ -658,8 +664,12 @@ impl Backend for SeBackend {
     fn delete_key(&mut self, handle: &[u8]) -> Result<(), BackendError> {
         match handle.split_first() {
             // Blob keys have no state outside the blob; dropping it deletes.
-            Some((&HANDLE_BLOB, _)) => Ok(()),
-            Some((&HANDLE_KEYCHAIN, tag)) => {
+            Some((&HANDLE_BLOB, _)) if self.mode == StorageMode::Blob => Ok(()),
+            Some((&HANDLE_KEYCHAIN, tag))
+                if self.mode == StorageMode::Keychain
+                    && tag.starts_with(TAG_PREFIX)
+                    && tag.len() > TAG_PREFIX.len() =>
+            {
                 SecKey::delete_from_keychain(tag, true).map_err(to_backend)
             }
             _ => Err(BackendError::KeyNotFound),

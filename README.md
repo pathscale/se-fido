@@ -69,11 +69,12 @@ Durable authenticators use permanent Keychain keys. Legacy credential
 directories containing Blob handles are not migrated automatically. They
 require an explicit migration or credential re-enrollment.
 
-The required `keychain-access-groups` entitlement is included in the
-entitlements file. Its group must match the access authorized by the binary's
-signing identity and provisioning profile. A plist entry alone does not grant
-Keychain access. Missing entitlement or unavailable Keychain storage is a hard
-error.
+The entitlement template requires an explicitly supplied, fully prefixed
+Keychain access group. The signing script requires an authorized identity and
+expands the template; see [deployment](crates/transport-mac/DEPLOY.md). Its group
+must match the access authorized by the signing identity and provisioning
+profile. A plist entry alone does not grant Keychain access. Missing entitlement
+or unavailable Keychain storage is a hard error.
 
 ## Build and check
 
