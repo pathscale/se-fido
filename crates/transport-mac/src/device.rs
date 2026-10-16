@@ -27,6 +27,10 @@ const KEEPALIVE_MS: u64 = 100;
 
 /// One log line to stderr (launchd sends it to target/se-run.log).
 fn log(line: &str) {
+    if let Err(error) = se_fido_store::check_environment_secrets(line.as_bytes()) {
+        eprintln!("se-fido: {error}");
+        return;
+    }
     eprintln!("se-fido: {line}");
 }
 

@@ -9,7 +9,7 @@
 
 use crate::util::{sha256, sha256_hex, unhex, Args};
 use ctap2::{Bytes, Credential, CredentialStore, StoreError, TestDrbg, Text};
-use se_fido_store::FileStore;
+use se_fido_store::{check_environment_secrets, FileStore, ENVIRONMENT_SECRET_REFUSAL};
 use std::fmt::Write;
 use std::fs;
 use std::path::Path;
@@ -18,6 +18,7 @@ use std::sync::Arc;
 fn err_kind(e: &StoreError) -> &'static str {
     match e {
         StoreError::Full => "Full",
+        StoreError::Io(message) if message == ENVIRONMENT_SECRET_REFUSAL => "EnvironmentSecret",
         StoreError::Io(_) => "Io",
         StoreError::Corrupt(_) => "Corrupt",
         StoreError::CounterExhausted => "CounterExhausted",
@@ -258,8 +259,12 @@ fn run_in(input: &str, dir: &Path) -> Result<String, String> {
             "write" => {
                 let name = a.get("file").ok_or_else(|| ctx("file".into()))?;
                 let b = unhex(a.get("hex").unwrap_or("")).map_err(ctx)?;
-                fs::write(dir.join(name), &b).map_err(|e| ctx(e.to_string()))?;
-                Ok(format!("wrote {} bytes", b.len()))
+                match check_environment_secrets(&b) {
+                    Ok(()) => fs::write(dir.join(name), &b)
+                        .map(|_| format!("wrote {} bytes", b.len()))
+                        .map_err(|e| StoreError::Io(e.to_string())),
+                    Err(_) => Err(StoreError::Io(ENVIRONMENT_SECRET_REFUSAL.into())),
+                }
             }
             "setcounter" => {
                 let v: u32 = a

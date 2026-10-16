@@ -6,7 +6,7 @@
 	<true/>
 	<key>keychain-access-groups</key>
 	<array>
-		<string>com.se-fido.device</string>
+		<string>__KEYCHAIN_ACCESS_GROUP__</string>
 	</array>
 </dict>
 </plist>

@@ -11,6 +11,14 @@
 use ctap2::{AttestationFormat, UvPolicy};
 use transport_mac::device::{dry_run_text, DeviceOptions};
 
+fn diagnostic(message: &str) {
+    if let Err(error) = se_fido_store::check_environment_secrets(message.as_bytes()) {
+        eprintln!("se-fido-device: {error}");
+    } else {
+        eprintln!("se-fido-device: {message}");
+    }
+}
+
 fn main() {
     let mut opts = DeviceOptions::default();
     let mut run = false;
@@ -21,7 +29,7 @@ fn main() {
             opts.auto_approve = true;
         } else if let Some(v) = a.strip_prefix("--uv-policy=") {
             opts.uv_policy = UvPolicy::parse(v).unwrap_or_else(|| {
-                eprintln!("se-fido-device: bad --uv-policy={v}");
+                diagnostic(&format!("bad --uv-policy={v}"));
                 std::process::exit(2);
             });
         } else if let Some(v) = a.strip_prefix("--attestation=") {
@@ -29,7 +37,7 @@ fn main() {
                 "packed" => AttestationFormat::PackedSelf,
                 "none" => AttestationFormat::None,
                 _ => {
-                    eprintln!("se-fido-device: bad --attestation={v}");
+                    diagnostic(&format!("bad --attestation={v}"));
                     std::process::exit(2);
                 }
             };
@@ -39,7 +47,7 @@ fn main() {
             );
             return;
         } else {
-            eprintln!("se-fido-device: unknown argument {a}");
+            diagnostic(&format!("unknown argument {a}"));
             std::process::exit(2);
         }
     }
@@ -49,7 +57,7 @@ fn main() {
     }
     // SAFETY: user passed --run after following DEPLOY.md.
     if let Err(e) = unsafe { transport_mac::device::run(&opts) } {
-        eprintln!("se-fido-device: {e}");
+        diagnostic(&e);
         std::process::exit(1);
     }
 }

@@ -22,6 +22,7 @@ mod se;
 mod store;
 mod util;
 
+use se_fido_store::check_environment_secrets;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::exit;
@@ -123,6 +124,11 @@ fn run(regen: bool) -> i32 {
         let exp_path = f.with_extension("expected");
         let exp_name = rel(&base, &exp_path);
         if regen {
+            if let Err(e) = check_environment_secrets(out.as_bytes()) {
+                println!("FAIL {name}: {e}");
+                failed += 1;
+                continue;
+            }
             if let Err(e) = fs::write(&exp_path, &out) {
                 println!("FAIL {name}: writing expected: {e}");
                 failed += 1;
