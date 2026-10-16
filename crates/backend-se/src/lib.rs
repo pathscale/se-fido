@@ -5,14 +5,16 @@
 //! No Swift, Objective-C, CryptoKit, `-sys` crates or wrapper crates.
 //!
 //! Storage modes:
-//! * [`StorageMode::Blob`]: non-permanent Secure Enclave key; its
-//!   SE-encrypted token object (undocumented `toid` attribute) is kept by us
-//!   and reloaded with `SecKeyCreateWithData`. No entitlement needed.
+//! * [`StorageMode::Blob`]: in-memory probe mode. Its token object blob can
+//!   appear in a credential handle, so do not use it for durable credentials.
 //! * [`StorageMode::Keychain`]: permanent data-protection keychain item by
 //!   application tag. Needs a keychain-access-groups entitlement; fails with
 //!   -34018 for ad-hoc signed binaries.
 //!
 //! Results per macOS version are recorded in PLAN.md.
+//!
+//! Durable credential storage must use [`StorageMode::Keychain`]. Blob mode is
+//! for in-memory probing only.
 
 #[cfg(target_os = "macos")]
 pub mod ffi;

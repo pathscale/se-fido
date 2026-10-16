@@ -4,5 +4,9 @@
 <dict>
 	<key>com.apple.developer.hid.virtual.device</key>
 	<true/>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>__KEYCHAIN_ACCESS_GROUP__</string>
+	</array>
 </dict>
 </plist>
