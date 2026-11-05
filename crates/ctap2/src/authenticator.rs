@@ -609,6 +609,9 @@ impl<B: Backend, S: CredentialStore, P: UserPresence> Authenticator<B, S, P> {
         }
 
         let using_allow_list = !allow.is_empty();
+        if !using_allow_list && !want_up && !want_uv {
+            return Err(Status::NotAllowed);
+        }
         let mut creds: Vec<Arc<Credential>> = Vec::new();
         if using_allow_list {
             for id in &allow {
