@@ -51,6 +51,67 @@ fn io(e: std::io::Error) -> StoreError {
     StoreError::Io(e.to_string())
 }
 
+/// Refusal returned when plaintext contains a value from a secret-bearing
+/// environment variable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EnvironmentSecretError;
+
+impl std::fmt::Display for EnvironmentSecretError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(ENVIRONMENT_SECRET_REFUSAL)
+    }
+}
+
+impl std::error::Error for EnvironmentSecretError {}
+
+pub const ENVIRONMENT_SECRET_REFUSAL: &str =
+    "refused plaintext matching a secret-bearing environment variable";
+
+/// Check plaintext before it is persisted. Values from environment variables
+/// are considered secret only when the variable name identifies a secret and
+/// the value is nonempty. Generic variables such as `USER`,
+/// `PATH`, and `HOME` are deliberately not inspected.
+pub fn check_environment_secrets(content: &[u8]) -> Result<(), EnvironmentSecretError> {
+    for (name, value) in std::env::vars_os() {
+        let name = name.to_string_lossy().to_ascii_uppercase();
+        if !is_secret_env_name(&name) {
+            continue;
+        }
+        let bytes = value.as_encoded_bytes();
+        if !bytes.is_empty() && content.windows(bytes.len()).any(|window| window == bytes) {
+            return Err(EnvironmentSecretError);
+        }
+    }
+    Ok(())
+}
+
+fn is_secret_env_name(name: &str) -> bool {
+    let parts: Vec<&str> = name
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .collect();
+    parts.iter().any(|part| {
+        matches!(
+            *part,
+            "SECRET"
+                | "TOKEN"
+                | "PASSWORD"
+                | "PASSWD"
+                | "PASSPHRASE"
+                | "COOKIE"
+                | "JWT"
+                | "CREDENTIAL"
+                | "CREDENTIALS"
+                | "SEED"
+        )
+    }) || parts.windows(2).any(|pair| {
+        matches!(
+            pair[0],
+            "API" | "PRIVATE" | "ACCESS" | "SIGNING" | "ENCRYPTION"
+        ) && pair[1] == "KEY"
+    })
+}
+
 impl<E: Entropy> FileStore<E> {
     /// Open or create the store. A present index that does not decrypt with
     /// `key` is [`StoreError::Corrupt`].
@@ -101,9 +162,12 @@ impl<E: Entropy> FileStore<E> {
     }
 
     fn persist_index(&mut self, creds: &[Arc<Credential>]) -> Result<(), StoreError> {
+        let plain = encode_index(creds);
+        check_environment_secrets(&plain)
+            .map_err(|_| StoreError::Io(ENVIRONMENT_SECRET_REFUSAL.into()))?;
         let mut nonce = [0u8; 12];
         self.entropy.fill(&mut nonce);
-        let blob = encrypt_index(&self.cipher, &nonce, creds)?;
+        let blob = encrypt_index(&self.cipher, &nonce, &plain)?;
         atomic_write(&self.dir, CRED_FILE, &blob).map_err(io)
     }
 }
@@ -198,11 +262,7 @@ fn opt_text(t: &Option<Text>) -> Out<'_> {
     t.as_ref().map_or(Out::Null, |t| Out::Text(t.as_str()))
 }
 
-fn encrypt_index(
-    cipher: &ChaCha20Poly1305,
-    nonce: &[u8; 12],
-    creds: &[Arc<Credential>],
-) -> Result<Vec<u8>, StoreError> {
+fn encode_index(creds: &[Arc<Credential>]) -> Vec<u8> {
     let records = creds
         .iter()
         .map(|c| {
@@ -221,12 +281,19 @@ fn encrypt_index(
             ])
         })
         .collect();
-    let plain = encode(&Out::Array(records));
+    encode(&Out::Array(records))
+}
+
+fn encrypt_index(
+    cipher: &ChaCha20Poly1305,
+    nonce: &[u8; 12],
+    plain: &[u8],
+) -> Result<Vec<u8>, StoreError> {
     let ct = cipher
         .encrypt(
             &Nonce::from(*nonce),
             Payload {
-                msg: &plain,
+                msg: plain,
                 aad: AAD,
             },
         )
