@@ -13,6 +13,8 @@
   status Ok (0x00)
   body {1: {"id": h"d2b0a4f3addfc3280a6c547e5951344f3273166068d7995439adf4d47bd8ac6a", "type": "public-key"}, 2: h"a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19470000000003", 3: h"3046022100b5c3b4cdfa7eca7a0033a4f8b700e95cefee37830cc95c6f9d1de86c762a56ca0221009505f0ca239484784e10242f4cfa4907707e5a8126f4242a5f6d56a05f80a8b5", 4: {"id": h"7531"}}
   rp assertion $1 flags=- counter=3 sig=valid user_id=7531 name=- display=- n=-
+> get rp=example.com up=false expect=NotAllowed
+  status NotAllowed (0x30)
 > check presence=2
   presence=2
 > presence nouv
