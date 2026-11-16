@@ -27,8 +27,9 @@ decrypted store buffer.
 
 ## What the authenticator advertises
 
-- versions `FIDO_2_0` and `FIDO_2_1`; extension `credProtect` (accepted/echoed);
-  ES256 only; transports `usb`
+- versions `FIDO_2_0` and `FIDO_2_1`; extension `credProtect` (enforced; level 3
+  is created as level 2 when the UV policy is `none`); ES256 only; transports
+  `usb`
 - options `rk`, `up`, `plat=false`; `uv` only when the default UV policy is
   `presence` or `biometry` (not `none`)
 - UV policy per credential (default `presence`): `none` (no SE prompt; UP via
@@ -53,19 +54,42 @@ bytes of that one constant with a fresh UUIDv4 and run
 
 ## Secure Enclave storage
 
-Keys are P-256, created with `kSecAttrTokenIDSecureEnclave` and
-`permanent=false`. Access control follows the credential UV policy
-(`none` / `presence` / `biometry`). The key token object (`toid`, 324
-bytes) is stored as the credential key handle and reloaded with
-`SecKeyCreateWithData`. The private key never leaves the Secure Enclave.
+Keys are P-256 Secure Enclave keys. Access control follows the credential UV
+policy (`none` / `presence` / `biometry`). The private key never leaves the
+Secure Enclave. `se-fido-device --storage=blob|keychain` selects where keys
+live:
 
-The credential index is encrypted with a key from SE ECDH + HKDF (see
-`backend_se::storage_key`). Unverified: `toid` reload after rebuild or
-re-signing the binary, or from another process.
+- `blob` (default; works for ad-hoc signed binaries): keys are created with
+  `permanent=false`. The key token object (`toid`, 324 bytes) is stored as
+  the credential key handle and reloaded with `SecKeyCreateWithData`. The
+  index key's SE token object is saved as `store-key.handle`. Data
+  directories from earlier builds load unchanged.
+- `keychain` (opt-in): keys are permanent data-protection Keychain items, and
+  each credential record stores an application-tag reference instead of a
+  token object blob. The storage key's Keychain tag is bound to the canonical
+  data-directory path; moving that directory requires explicit migration.
+  This mode needs a `keychain-access-groups` entitlement. Without one,
+  Keychain calls fail with OSStatus -34018 and the device refuses to start.
 
-Keychain storage (`permanent=true`) fails with OSStatus -34018 for
-binaries without a keychain-access-group entitlement, so blob mode is the
-default.
+A data directory belongs to one mode. Each mode refuses a directory written by
+the other, and there is no migration between them. In both modes the
+credential index is encrypted with ChaCha20-Poly1305 using a key from SE ECDH
++ HKDF (see `backend_se::storage_key`). Only the peer public key is saved as
+`store-peer.pub`, and the derived key stays in memory. Storage failures are
+errors; there is no plaintext secret fallback.
+
+The `se-probe` capability probe creates an ephemeral Blob key. It also
+creates and then deletes a tagged permanent data-protection Keychain test key
+(plus a legacy file-keychain key with `--legacy-keychain`). The opt-in SE
+fixture uses Blob keys and a random in-memory index key, so it creates no
+Keychain item.
+
+Keychain mode signs with a separate entitlement template that takes an
+explicitly supplied, fully prefixed access group. A plist entry alone does not
+grant Keychain access: the group must be authorized by the signing identity
+and an embedded provisioning profile. See
+[deployment](crates/transport-mac/DEPLOY.md) for both the personal-Mac route
+and the provisioned route.
 
 ## Build and check
 

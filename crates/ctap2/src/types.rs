@@ -58,7 +58,8 @@ impl UvPolicy {
 /// in the store; `discoverable` marks resident ("rk") credentials.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Credential {
-    /// Credential ID given to the relying party ([`CREDENTIAL_ID_LEN`] random bytes).
+    /// Legacy IDs are [`CREDENTIAL_ID_LEN`] random bytes. Extended IDs add
+    /// protection metadata before the same random bytes.
     pub id: Bytes,
     pub rp_id: Text,
     pub rp_name: Option<Text>,
@@ -74,6 +75,35 @@ pub struct Credential {
     pub created: u64,
     /// UV policy bound into the SE key (or recorded for the soft backend).
     pub uv_policy: UvPolicy,
+}
+
+impl Credential {
+    /// Protection metadata is part of the stored opaque credential ID.
+    ///
+    /// Extended ID format: the 4 ASCII bytes `SFCP`, one level byte (1, 2 or
+    /// 3), then the [`CREDENTIAL_ID_LEN`] random bytes, 37 bytes in total.
+    /// The level is therefore visible to the relying party that holds the ID.
+    /// Legacy IDs (exactly [`CREDENTIAL_ID_LEN`] bytes) have no metadata and
+    /// map to level 1. An extended ID with an unknown level byte is treated
+    /// as level 3, the most restrictive.
+    pub fn cred_protect(&self) -> u8 {
+        if self.id.len() == CREDENTIAL_ID_LEN + 5 && self.id.starts_with(b"SFCP") {
+            match self.id[4] {
+                1..=3 => self.id[4],
+                _ => 3,
+            }
+        } else {
+            1
+        }
+    }
+
+    pub fn allows_assertion(&self, using_allow_list: bool, user_verified: bool) -> bool {
+        match self.cred_protect() {
+            1 => true,
+            2 => using_allow_list || user_verified,
+            _ => user_verified,
+        }
+    }
 }
 
 pub const CREDENTIAL_ID_LEN: usize = 32;
@@ -167,6 +197,8 @@ pub struct PresenceRequest {
     pub user_name: Option<Text>,
     /// User verification (Touch ID) requested, not just presence.
     pub require_uv: bool,
+    /// Assertion key policy, or None when no key use is known.
+    pub key_uv_policy: Option<UvPolicy>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

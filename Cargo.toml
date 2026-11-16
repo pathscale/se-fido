@@ -25,8 +25,8 @@ hkdf = { version = "^0.12", default-features = false }
 chacha20poly1305 = { version = "^0.10", default-features = false }
 
 ctaphid = { package = "se-fido-ctaphid", path = "crates/ctaphid", version = "^0.1", default-features = false }
-ctap2 = { package = "se-fido-ctap2", path = "crates/ctap2", version = "^0.1", default-features = false }
-se-fido-store = { path = "crates/store", version = "^0.1" }
-backend-se = { package = "se-fido-backend-se", path = "crates/backend-se", version = "^0.1" }
+ctap2 = { package = "se-fido-ctap2", path = "crates/ctap2", version = "^0.2", default-features = false }
+se-fido-store = { path = "crates/store", version = "^0.2" }
+backend-se = { package = "se-fido-backend-se", path = "crates/backend-se", version = "^0.2" }
 transport-test = { path = "crates/transport-test" }
 transport-mac = { path = "crates/transport-mac" }

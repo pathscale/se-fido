@@ -101,9 +101,10 @@ impl<E: Entropy> FileStore<E> {
     }
 
     fn persist_index(&mut self, creds: &[Arc<Credential>]) -> Result<(), StoreError> {
+        let plain = encode_index(creds);
         let mut nonce = [0u8; 12];
         self.entropy.fill(&mut nonce);
-        let blob = encrypt_index(&self.cipher, &nonce, creds)?;
+        let blob = encrypt_index(&self.cipher, &nonce, &plain)?;
         atomic_write(&self.dir, CRED_FILE, &blob).map_err(io)
     }
 }
@@ -198,11 +199,7 @@ fn opt_text(t: &Option<Text>) -> Out<'_> {
     t.as_ref().map_or(Out::Null, |t| Out::Text(t.as_str()))
 }
 
-fn encrypt_index(
-    cipher: &ChaCha20Poly1305,
-    nonce: &[u8; 12],
-    creds: &[Arc<Credential>],
-) -> Result<Vec<u8>, StoreError> {
+fn encode_index(creds: &[Arc<Credential>]) -> Vec<u8> {
     let records = creds
         .iter()
         .map(|c| {
@@ -221,12 +218,19 @@ fn encrypt_index(
             ])
         })
         .collect();
-    let plain = encode(&Out::Array(records));
+    encode(&Out::Array(records))
+}
+
+fn encrypt_index(
+    cipher: &ChaCha20Poly1305,
+    nonce: &[u8; 12],
+    plain: &[u8],
+) -> Result<Vec<u8>, StoreError> {
     let ct = cipher
         .encrypt(
             &Nonce::from(*nonce),
             Payload {
-                msg: &plain,
+                msg: plain,
                 aad: AAD,
             },
         )

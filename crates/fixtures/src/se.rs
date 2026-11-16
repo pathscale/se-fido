@@ -4,27 +4,25 @@
 //! AccessPolicy::None and presence is simulated (ScriptedPresence). Output
 //! is not compared byte for byte (keys and signatures are random); every
 //! step is verified relying-party side.
+//!
+//! Keys are non-permanent Blob keys and the index key is random and held in
+//! memory for the run, so no Keychain item or entitlement is involved and
+//! nothing outlives the run.
 
 use crate::tmp_root;
-use backend_se::{storage_key, AccessPolicy, SeBackend, StorageMode, SystemEntropy};
+use backend_se::{AccessPolicy, SeBackend, StorageMode, SystemEntropy};
 use ctap2::cbor::{encode, Out};
 use ctap2::soft::ScriptedPresence;
-use ctap2::{Authenticator, AuthenticatorConfig, UvPolicy};
+use ctap2::{Authenticator, AuthenticatorConfig, Entropy, UvPolicy};
 use se_fido_store::FileStore;
 use std::time::Instant;
 use transport_test::{rp, Host};
 
 type Auth = Authenticator<SeBackend, FileStore<SystemEntropy>, ScriptedPresence>;
 
-fn open(dir: &std::path::Path) -> Result<Auth, String> {
-    let t = Instant::now();
-    let key = storage_key(dir).map_err(|e| e.to_string())?;
-    println!(
-        "storage key derived via SE ECDH + HKDF in {:.1} ms",
-        t.elapsed().as_secs_f64() * 1000.0
-    );
+fn open(dir: &std::path::Path, key: &[u8; 32]) -> Result<Auth, String> {
     let store =
-        FileStore::open(dir.join("store"), &key, SystemEntropy).map_err(|e| e.to_string())?;
+        FileStore::open(dir.join("store"), key, SystemEntropy).map_err(|e| e.to_string())?;
     Ok(Authenticator::new(
         SeBackend::new(StorageMode::Blob, AccessPolicy::None),
         store,
@@ -76,7 +74,9 @@ fn get_req(cdh: &[u8; 32]) -> Vec<u8> {
 }
 
 fn run_inner(dir: &std::path::Path) -> Result<(), String> {
-    let mut auth = open(dir)?;
+    let mut key = [0u8; 32];
+    SystemEntropy.fill(&mut key);
+    let mut auth = open(dir, &key)?;
     let mut host = Host::new();
     host.connect([9; 8])?;
     let (_, cdh) = rp::client_data(
@@ -107,8 +107,8 @@ fn run_inner(dir: &std::path::Path) -> Result<(), String> {
     for round in 0..2 {
         if round == 1 {
             drop(auth);
-            auth = open(dir)?;
-            println!("reopened store from disk with re-derived key");
+            auth = open(dir, &key)?;
+            println!("reopened store from disk with the same index key");
         }
         let (_, cdh) = rp::client_data("webauthn.get", "c2UtZmlkby1nZXQ", "https://example.com");
         let t = Instant::now();

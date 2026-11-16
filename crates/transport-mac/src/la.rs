@@ -13,6 +13,8 @@ use crate::ffi::BlockPtr;
 use ctap2::{Presence, PresenceError};
 use std::ffi::{c_char, c_void, CStr};
 use std::ptr::null_mut;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 type Id = *mut c_void;
@@ -40,11 +42,23 @@ extern "C" {
     fn dispatch_release(object: *mut c_void);
 }
 
-#[repr(C)]
-struct ReplyCapture {
+struct ReplyState {
     sema: *mut c_void,
-    ok: *mut bool,
-    code: *mut i64,
+    ok: AtomicBool,
+    code: AtomicI64,
+    completed: AtomicBool,
+}
+
+// The semaphore supports concurrent signal/wait calls. All reply data is atomic.
+unsafe impl Send for ReplyState {}
+unsafe impl Sync for ReplyState {}
+
+impl Drop for ReplyState {
+    fn drop(&mut self) {
+        unsafe {
+            crate::ffi::dispatch_release(self.sema);
+        }
+    }
 }
 
 fn sel(name: &CStr) -> Sel {
@@ -94,15 +108,21 @@ fn send_policy_reply(obj: Id, s: Sel, policy: isize, reason: Id, reply: BlockPtr
 /// reply block: void (^)(BOOL success, NSError *error)
 unsafe extern "C" fn reply_invoke(block: *mut c_void, success: bool, error: Id) {
     let lit = block as *mut BlockLiteral<*mut c_void>;
-    let cap = (*lit).captured as *mut ReplyCapture;
-    if cap.is_null() {
+    let raw = (*lit).captured as *const ReplyState;
+    if raw.is_null() {
         return;
     }
-    *(*cap).ok = success;
-    if !success && !error.is_null() {
-        *(*cap).code = send_i64(error, sel(c"code"));
-    }
-    dispatch_semaphore_signal((*cap).sema);
+    // LA delivers one reply. Consume the reference reserved for that invocation.
+    let state = Arc::from_raw(raw);
+    let code = if !success && !error.is_null() {
+        send_i64(error, sel(c"code"))
+    } else {
+        0
+    };
+    state.code.store(code, Ordering::Relaxed);
+    state.ok.store(success, Ordering::Relaxed);
+    state.completed.store(true, Ordering::Release);
+    dispatch_semaphore_signal(state.sema);
 }
 
 fn msg_alloc_init(class: &CStr) -> Id {
@@ -124,6 +144,16 @@ fn nsstring(s: &str) -> Id {
     unsafe {
         let cls = objc_getClass(c"NSString".as_ptr());
         send_cstr(cls, sel(c"stringWithUTF8String:"), c.as_ptr())
+    }
+}
+
+fn send_void(obj: Id, s: Sel) {
+    unsafe {
+        let f: unsafe extern "C" fn(Id, Sel) = std::mem::transmute::<
+            *const (),
+            unsafe extern "C" fn(Id, Sel),
+        >(objc_msgSend as *const ());
+        f(obj, s);
     }
 }
 
@@ -166,17 +196,16 @@ pub fn evaluate(
             release(ctx);
             return Err(PresenceError::UvFailed);
         }
-        let mut ok = false;
-        let mut code: i64 = 0;
-        let mut cap = ReplyCapture {
+        crate::ffi::dispatch_retain(sema);
+        let state = Arc::new(ReplyState {
             sema,
-            ok: &mut ok,
-            code: &mut code,
-        };
-        let block = HeapBlock::copy_with_context(
-            reply_invoke as *const _,
-            &mut cap as *mut _ as *mut c_void,
-        );
+            ok: AtomicBool::new(false),
+            code: AtomicI64::new(0),
+            completed: AtomicBool::new(false),
+        });
+        let reply_state = Arc::into_raw(Arc::clone(&state));
+        let block =
+            HeapBlock::copy_with_context(reply_invoke as *const _, reply_state as *mut c_void);
 
         send_policy_reply(
             ctx,
@@ -189,6 +218,9 @@ pub fn evaluate(
         let ns = timeout.as_nanos().min(i64::MAX as u128) as i64;
         let when = crate::ffi::dispatch_time(crate::ffi::DISPATCH_TIME_NOW, ns);
         let waited = dispatch_semaphore_wait(sema, when);
+        if waited != 0 {
+            send_void(ctx, sel(c"invalidate"));
+        }
         drop(block);
         dispatch_release(sema);
         release(ctx);
@@ -196,11 +228,15 @@ pub fn evaluate(
         if waited != 0 {
             return Err(PresenceError::Timeout);
         }
-        if ok {
+        if !state.completed.load(Ordering::Acquire) {
+            return Err(PresenceError::UvFailed);
+        }
+        if state.ok.load(Ordering::Relaxed) {
             return Ok(Presence {
                 user_verified: biometry_only,
             });
         }
+        let code = state.code.load(Ordering::Relaxed);
         // LAErrorUserCancel = -2, LAErrorAuthenticationFailed = -1, LAErrorUserFallback = -3
         Err(match code {
             -2 => PresenceError::Cancelled,

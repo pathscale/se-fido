@@ -2,7 +2,7 @@ use crate::ffi::*;
 use ctap2::{Backend, BackendError, Bytes, Entropy, NewKey};
 use hkdf::Hkdf;
 use p256::elliptic_curve::sec1::ToEncodedPoint;
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use std::ffi::{c_char, c_void, CStr};
 use std::fmt;
 use std::path::Path;
@@ -554,10 +554,30 @@ impl SecKey {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageMode {
-    /// Token object blob inside the credential handle (works ad-hoc signed).
+    /// Non-permanent SE key; its SE-encrypted token object blob is kept in the
+    /// handle and reloaded with `SecKeyCreateWithData`. Needs no entitlement,
+    /// so it works for ad-hoc signed binaries.
     Blob,
-    /// Permanent data-protection keychain item (needs an entitlement).
+    /// Permanent data-protection keychain item by application tag. Needs a
+    /// keychain-access-groups entitlement.
     Keychain,
+}
+
+impl StorageMode {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "blob" => Some(StorageMode::Blob),
+            "keychain" => Some(StorageMode::Keychain),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StorageMode::Blob => "blob",
+            StorageMode::Keychain => "keychain",
+        }
+    }
 }
 
 const HANDLE_BLOB: u8 = 0x01;
@@ -606,8 +626,16 @@ impl SeBackend {
 
     pub fn load(&self, handle: &[u8]) -> Result<SecKey, SeError> {
         match handle.split_first() {
-            Some((&HANDLE_BLOB, blob)) => SecKey::from_blob_any(blob).map(|(k, _)| k),
-            Some((&HANDLE_KEYCHAIN, tag)) => SecKey::find_in_keychain(tag, true),
+            Some((&HANDLE_BLOB, blob)) if self.mode == StorageMode::Blob => {
+                SecKey::from_blob_any(blob).map(|(k, _)| k)
+            }
+            Some((&HANDLE_KEYCHAIN, tag))
+                if self.mode == StorageMode::Keychain
+                    && tag.starts_with(TAG_PREFIX)
+                    && tag.len() > TAG_PREFIX.len() =>
+            {
+                SecKey::find_in_keychain(tag, true)
+            }
             _ => Err(SeError::status("load", errSecItemNotFound)),
         }
     }
@@ -656,8 +684,12 @@ impl Backend for SeBackend {
     fn delete_key(&mut self, handle: &[u8]) -> Result<(), BackendError> {
         match handle.split_first() {
             // Blob keys have no state outside the blob; dropping it deletes.
-            Some((&HANDLE_BLOB, _)) => Ok(()),
-            Some((&HANDLE_KEYCHAIN, tag)) => {
+            Some((&HANDLE_BLOB, _)) if self.mode == StorageMode::Blob => Ok(()),
+            Some((&HANDLE_KEYCHAIN, tag))
+                if self.mode == StorageMode::Keychain
+                    && tag.starts_with(TAG_PREFIX)
+                    && tag.len() > TAG_PREFIX.len() =>
+            {
                 SecKey::delete_from_keychain(tag, true).map_err(to_backend)
             }
             _ => Err(BackendError::KeyNotFound),
@@ -667,57 +699,160 @@ impl Backend for SeBackend {
 
 const STORE_KEY_HANDLE: &str = "store-key.handle";
 const STORE_PEER_PUB: &str = "store-peer.pub";
+const CREDENTIAL_INDEX: &str = "store/credentials.bin";
+
+fn io_error(e: std::io::Error) -> SeError {
+    SeError::plain("storage_key io", e.to_string())
+}
 
 /// 32-byte credential index key bound to this Mac Secure Enclave.
 ///
 /// First use creates an SE key with [`AccessPolicy::None`] (no prompt; only
 /// `kSecAccessControlPrivateKeyUsage`) and a throwaway software key pair whose
-/// public half is saved as `store-peer.pub`. The SE token object blob is saved
-/// as `store-key.handle`. Key material is
-/// `HKDF-SHA256(ECDH(se_private, peer_public), info="se-fido store key")`.
+/// public half is saved as `store-peer.pub`. Key material is
+/// `HKDF-SHA256(ECDH(se_private, peer_public), info="credentials.bin")`.
 ///
-/// The wrapping key never leaves the derivation: only the SE-bound handle and
-/// the peer public key are on disk. Losing `store-key.handle` makes the
+/// Where the SE key lives follows `mode`:
+/// * [`StorageMode::Blob`]: non-permanent key whose SE token object blob is
+///   saved as `store-key.handle`. Needs no entitlement, so it works for
+///   ad-hoc signed binaries, and directories written by earlier builds load
+///   unchanged.
+/// * [`StorageMode::Keychain`]: permanent data-protection keychain item whose
+///   tag is bound to the canonical data-directory path. Needs a
+///   keychain-access-groups entitlement. A directory holding
+///   `store-key.handle` is refused; there is no migration between modes.
+///
+/// The wrapping key never leaves the derivation. Losing the SE key makes the
 /// credential index unreadable (no backup by design).
-///
-/// Unverified: whether a `toid` blob remains usable after rebuilding or
-/// re-signing this binary, or from another process on the same Mac. Treat
-/// cross-binary reload as unproven until exercised on a deployed device.
-pub fn storage_key(dir: &Path) -> Result<[u8; 32], SeError> {
-    let io = |e: std::io::Error| SeError::plain("storage_key io", e.to_string());
-    std::fs::create_dir_all(dir).map_err(io)?;
+pub fn storage_key(dir: &Path, mode: StorageMode) -> Result<[u8; 32], SeError> {
+    std::fs::create_dir_all(dir).map_err(io_error)?;
+    let shared = match mode {
+        StorageMode::Blob => blob_shared_secret(dir)?,
+        StorageMode::Keychain => keychain_shared_secret(dir)?,
+    };
+    let hk = Hkdf::<Sha256>::new(Some(b"se-fido store v1"), &shared);
+    let mut derived = [0u8; 32];
+    hk.expand(b"credentials.bin", &mut derived)
+        .map_err(|_| SeError::plain("hkdf", "expand failed"))?;
+    Ok(derived)
+}
+
+fn blob_shared_secret(dir: &Path) -> Result<Vec<u8>, SeError> {
     let backend = SeBackend::new(StorageMode::Blob, AccessPolicy::None);
     let hpath = dir.join(STORE_KEY_HANDLE);
     let ppath = dir.join(STORE_PEER_PUB);
-    let (handle, peer) = if hpath.exists() && ppath.exists() {
-        (
-            std::fs::read(&hpath).map_err(io)?,
-            std::fs::read(&ppath).map_err(io)?,
-        )
-    } else {
-        let (handle, _) = backend.create()?;
-        let peer_secret = loop {
-            let mut b = [0u8; 32];
-            SystemEntropy.fill(&mut b);
-            if let Ok(s) = p256::SecretKey::from_slice(&b) {
-                break s;
+    let handle_exists = hpath.try_exists().map_err(io_error)?;
+    let peer_exists = ppath.try_exists().map_err(io_error)?;
+    let (handle, peer) = match (handle_exists, peer_exists) {
+        (true, true) => (
+            std::fs::read(&hpath).map_err(io_error)?,
+            std::fs::read(&ppath).map_err(io_error)?,
+        ),
+        (false, false) => {
+            if dir.join(CREDENTIAL_INDEX).try_exists().map_err(io_error)? {
+                return Err(SeError::plain(
+                    "storage_key",
+                    "existing credential index has no storage key",
+                ));
             }
-        };
-        let peer = peer_secret
-            .public_key()
-            .to_encoded_point(false)
-            .as_bytes()
-            .to_vec();
-        write_private(&hpath, &handle).map_err(io)?;
-        write_private(&ppath, &peer).map_err(io)?;
-        (handle, peer)
+            let (handle, _) = backend.create()?;
+            let peer = new_peer_public();
+            write_private(&hpath, &handle).map_err(io_error)?;
+            if let Err(e) = write_private(&ppath, &peer) {
+                let _ = std::fs::remove_file(&hpath);
+                return Err(io_error(e));
+            }
+            (handle, peer)
+        }
+        (true, false) => {
+            return Err(SeError::plain(
+                "storage_key",
+                "store-key.handle exists without store-peer.pub",
+            ))
+        }
+        (false, true) => {
+            return Err(SeError::plain(
+                "storage_key",
+                "store-peer.pub exists without store-key.handle; the directory was created in Keychain mode",
+            ))
+        }
     };
-    let shared = backend.key_exchange(&handle, &peer)?;
-    let hk = Hkdf::<Sha256>::new(Some(b"se-fido store v1"), &shared);
-    let mut key = [0u8; 32];
-    hk.expand(b"credentials.bin", &mut key)
-        .map_err(|_| SeError::plain("hkdf", "expand failed"))?;
-    Ok(key)
+    backend.key_exchange(&handle, &peer)
+}
+
+fn keychain_shared_secret(dir: &Path) -> Result<Vec<u8>, SeError> {
+    let hpath = dir.join(STORE_KEY_HANDLE);
+    let ppath = dir.join(STORE_PEER_PUB);
+    if hpath.try_exists().map_err(io_error)? {
+        return Err(SeError::plain(
+            "storage_key",
+            "store-key.handle belongs to a Blob-mode data directory, which Keychain mode cannot open",
+        ));
+    }
+
+    let canonical_dir = std::fs::canonicalize(dir).map_err(io_error)?;
+    let mut tag = TAG_PREFIX.to_vec();
+    tag.extend_from_slice(&Sha256::digest(
+        canonical_dir.as_os_str().as_encoded_bytes(),
+    ));
+
+    let peer_exists = ppath.try_exists().map_err(io_error)?;
+    let key = match SecKey::find_in_keychain(&tag, true) {
+        Ok(key) if peer_exists => key,
+        Ok(_) => {
+            return Err(SeError::plain(
+                "storage_key",
+                "keychain key exists without its peer public key",
+            ))
+        }
+        Err(e) if e.code == errSecItemNotFound as i64 && !peer_exists => {
+            if dir.join(CREDENTIAL_INDEX).try_exists().map_err(io_error)? {
+                return Err(SeError::plain(
+                    "storage_key",
+                    "existing credential index has no storage key",
+                ));
+            }
+            let key = SecKey::generate(
+                &KeyStorage::Keychain {
+                    tag: tag.clone(),
+                    data_protection: true,
+                },
+                AccessPolicy::None,
+            )?;
+            let peer = new_peer_public();
+            if let Err(e) = write_private(&ppath, &peer) {
+                let _ = SecKey::delete_from_keychain(&tag, true);
+                return Err(io_error(e));
+            }
+            key
+        }
+        Err(e) if e.code == errSecItemNotFound as i64 => {
+            return Err(SeError::plain(
+                "storage_key",
+                "peer public key exists without its keychain key",
+            ))
+        }
+        Err(e) => return Err(e),
+    };
+
+    let peer = std::fs::read(&ppath).map_err(io_error)?;
+    key.ecdh(&peer)
+}
+
+/// SEC1 public half of a throwaway software key pair.
+fn new_peer_public() -> Vec<u8> {
+    let peer_secret = loop {
+        let mut bytes = [0u8; 32];
+        SystemEntropy.fill(&mut bytes);
+        if let Ok(secret) = p256::SecretKey::from_slice(&bytes) {
+            break secret;
+        }
+    };
+    peer_secret
+        .public_key()
+        .to_encoded_point(false)
+        .as_bytes()
+        .to_vec()
 }
 
 fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {

@@ -1,7 +1,7 @@
 [package]
 name = "fixtures"
 description = "Fixture runner: replays committed inputs and compares byte-for-byte expected outputs"
-version.workspace = true
+version = "0.2.0"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
