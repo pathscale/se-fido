@@ -10,9 +10,8 @@
 //!   --storage=blob|keychain   where SE keys live (default blob, which works
 //!                             ad-hoc signed; keychain needs an access group)
 
-use backend_se::StorageMode;
 use ctap2::{AttestationFormat, UvPolicy};
-use transport_mac::device::{dry_run_text, DeviceOptions};
+use transport_mac::{dry_run_text, DeviceOptions, StorageMode};
 
 fn diagnostic(message: &str) {
     eprintln!("se-fido-device: {message}");
@@ -59,9 +58,17 @@ fn main() {
         print!("{}", dry_run_text(&opts));
         return;
     }
-    // SAFETY: user passed --run after following DEPLOY.md.
-    if let Err(e) = unsafe { transport_mac::device::run(&opts) } {
-        diagnostic(&e);
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: user passed --run after following DEPLOY.md.
+        if let Err(e) = unsafe { transport_mac::device::run(&opts) } {
+            diagnostic(&e);
+            std::process::exit(1);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        diagnostic("--run requires macOS");
         std::process::exit(1);
     }
 }

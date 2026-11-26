@@ -1,8 +1,8 @@
 //! macOS virtual HID transport for CTAPHID.
 //!
-//! Pure pieces (`REPORT_DESCRIPTOR`, [`properties`], Block layout constants)
-//! are available on every target. Creating an `IOHIDUserDevice` is macOS-only
-//! and lives in [`device`]. See DESIGN.md and DEPLOY.md.
+//! Pure pieces (`REPORT_DESCRIPTOR`, [`properties`], device options and dry-run
+//! output) are available on every target. Creating an `IOHIDUserDevice` is
+//! macOS-only and lives in [`device`]. See DESIGN.md and DEPLOY.md.
 //!
 //! This crate never activates a device unless [`device::run`] is called, which
 //! the `se-fido-device` binary only does with an explicit `--run` flag.
@@ -24,9 +24,13 @@ mod cf;
 pub mod device;
 #[cfg(target_os = "macos")]
 pub mod ffi;
+#[cfg(target_os = "macos")]
 pub mod la;
+pub mod options;
 #[cfg(feature = "std")]
 pub mod trace;
+
+pub use options::{data_dir, dry_run_text, DeviceOptions, StorageMode};
 
 /// FIDO usage page (HID Usage Tables, FIDO Alliance page).
 pub const FIDO_USAGE_PAGE: u16 = 0xf1d0;
